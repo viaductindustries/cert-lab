@@ -1,49 +1,72 @@
 # Cert Lab
 
-A small macOS app for running a private certificate authority, with the CA kept in 1Password.
+**TLS certificates for your home lab, signed by a certificate authority kept in 1Password.**
+
+Cert Lab is a small macOS app for running your own private CA. You create (or import) a CA once, trust it on your devices, and then issue certificates for your NAS, router, Home Assistant, Grafana and anything else on your network. The CA lives in its own 1Password vault, so issuing a certificate needs 1Password's approval. There are no CA keys sitting on your disk.
+
+![Cert Lab main window](docs/screenshot.png)
+
+## Features
+
+- **Create or import a CA.** Generate an ECDSA or RSA CA, or import an existing certificate and key (PKCS#8, SEC1, PKCS#1 or encrypted PKCS#8).
+- **Issue certificates in seconds.** Enter hostnames and IP addresses, pick an expiry date, and get back the private key, the certificate, the full chain and the CA certificate. You can copy them or export them as files.
+- **Private keys are shown once.** Issued keys are never stored anywhere: not on disk, not in 1Password, not in the log.
+- **Issuance history.** A searchable log of everything each CA has issued, showing what's valid, expiring soon or expired. It syncs through 1Password, so every Mac sees the same history.
+- **Name constraints.** Optionally limit a CA to domains like `home.arpa` and ranges like `192.168.0.0/16`, so trusting it can't be abused for other websites.
+- **Optional passphrase.** If you want issuing to need more than 1Password's approval, you can also protect a CA's key with a passphrase.
+- **No lock-in.** Everything is stored in standard formats that work with `openssl`.
 
 ## Requirements
 
-- macOS 14+
-- [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`brew install 1password-cli`)
-- 1Password app → Settings → Developer → **Integrate with 1Password CLI** turned on
+- macOS 14 or later
+- The [1Password](https://1password.com) desktop app, with **Settings › Developer › Integrate with 1Password CLI** turned on
+- The [1Password CLI](https://developer.1password.com/docs/cli/get-started/): `brew install 1password-cli`
 
-## Build
+## Installing
 
-```sh
-scripts/build-app.sh            # → build/Cert Lab.app
-scripts/build-app.sh --install  # also copies it to /Applications
-swift test                      # core tests (uses openssl for interop checks)
-```
+Download `Cert-Lab-<version>.zip` from the [latest release](https://github.com/viaductindustries/cert-lab/releases/latest), unzip it and move **Cert Lab** to Applications.
 
-## Releases
-
-Releases are cut by [release-please](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org/) on `main`:
-
-- `fix: …` bumps the patch version and `feat: …` the minor version. `feat!: …` or a `BREAKING CHANGE:` footer bumps the major version.
-- release-please keeps a release PR open that updates `CHANGELOG.md` and `version.txt`. Merging it tags the release and creates the GitHub release.
-- The Release workflow then builds `Cert-Lab-<version>.zip`, plus a `.sha256` file, and attaches them to that release.
-
-CI (`.github/workflows/ci.yml`) runs the tests and builds the app on every push and pull request.
-
-The app is ad-hoc signed, not notarized, so macOS blocks it the first time it's opened after downloading. Either right-click the app and choose **Open**, or run:
+Builds aren't notarized yet, so the first time you open the app, right-click it and choose **Open**. Alternatively, run:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/Cert Lab.app"
 ```
 
-## How it works
+## Using Cert Lab
 
-- **Each CA gets its own 1Password vault** (by default called `CA: <name>`; you can choose an existing vault instead). The vault contains:
-  - **The CA item**, a Secure Note tagged `cert-lab/ca`, with fields `certificate`, `private_key` (concealed, PKCS#8) and `sha256_fingerprint`.
-  - **One Secure Note per issued certificate**, tagged `cert-lab/certificate`, holding the certificate, serial number, expiry date and a `record` field with the log entry as JSON. These never contain private keys.
-- **Access to the vault means you can issue.** By default the CA key is stored unencrypted inside 1Password, so issuing only needs 1Password's approval. You can optionally protect a CA's key with a passphrase (PBES2: PBKDF2-SHA256 with 600k iterations, AES-256-CBC). That's only useful if you keep the passphrase *outside* the CA's vault. Either way the key is in standard format and works with `openssl`.
-- **Every issuance fetches the CA from 1Password.** The app never caches the CA key or writes it to disk.
-- **Leaf keys are shown once.** You can copy them (marked concealed, and cleared from the clipboard after 90 seconds) or export them (`.key` with mode 0600, `.crt`, `.fullchain.crt`, `ca.crt`). After that they're gone.
-- **History syncs through the vault.** `~/Library/Application Support/Cert Lab/issued.json` is a local cache. If saving a certificate to 1Password fails, it's flagged and saved on the next **Sync**. Sync also pulls in certificates issued from other Macs. **Link CA from 1Password** sets up a CA on a new Mac, including its history.
+1. **Add a CA:** create a new one, import one, or link one you set up on another Mac. A new or imported CA gets its own 1Password vault (`CA: <name>` by default).
+2. **Trust the CA:** from the CA's menu choose **Export CA Certificate…**, then install it on the devices and browsers that should trust your certificates.
+3. **Issue certificates:** press ⌘N, enter names, and approve the request in 1Password. Save the private key before closing the result; it can't be shown again.
+4. **Sync:** press ⌘R to save any certificates that didn't reach 1Password and to fetch ones issued on other Macs.
 
-## Defaults worth knowing
+## How your data is stored
 
-- New CAs get `pathlen:0`, so they can sign leaf certificates but not intermediates. Name constraints are optional and enforced by the app at issuance.
-- Leaf certificates get SANs, `serverAuth` (plus `clientAuth` if you choose it), and SKI/AKI. The common name is the first SAN.
-- The app warns about lifetimes over 825 days, because Apple devices reject those TLS certificates.
+| Where | What |
+|---|---|
+| The CA's 1Password vault | The CA item (certificate and private key), plus one item per issued certificate (certificate and details, never its key) |
+| `~/Library/Application Support/Cert Lab/` | Which CAs are linked on this Mac, and a local cache of the issuance log |
+
+Anyone with access to a CA's vault can issue certificates from it. If you turn on a CA passphrase, the key is stored encrypted (PKCS#8 with PBKDF2-SHA256 and AES-256-CBC). That only helps if you keep the passphrase *outside* that vault.
+
+Issued certificates include their SANs and `serverAuth` (plus `clientAuth` if you choose it). Cert Lab warns about lifetimes over 825 days, because Apple devices reject longer-lived TLS certificates. CAs are created with `pathLen 0`, so they can sign certificates but not other CAs.
+
+## Building from source
+
+```sh
+swift test                         # tests (uses openssl for interoperability checks)
+scripts/build-app.sh               # → build/Cert Lab.app
+scripts/build-app.sh --install     # also copies it to /Applications
+scripts/build-app.sh --zip         # also writes build/Cert-Lab-<version>.zip
+```
+
+This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app.
+
+## Contributing and releases
+
+Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, etc.). [release-please](https://github.com/googleapis/release-please) uses them to manage versions:
+
+- Each push to `main` updates a release PR that bumps `version.txt` and `CHANGELOG.md`.
+- Merging that PR tags the release and publishes it on GitHub, and CI attaches the built app.
+- CI runs the tests and builds the app on every push and pull request.
+
+[AGENTS.md](AGENTS.md) records the project's design decisions and conventions, for both people and coding agents.
