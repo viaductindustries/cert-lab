@@ -25,6 +25,8 @@ public protocol CAVault: Sendable {
     func saveIssued(_ record: IssuedRecord, vaultID: String) async throws -> String
     func listIssuedItemIDs(vaultID: String) async throws -> [String]
     func loadIssued(itemID: String, vaultID: String) async throws -> IssuedRecord
+    /// False only if the item definitely doesn't exist; other failures throw.
+    func itemExists(itemID: String, vaultID: String) async throws -> Bool
 }
 
 /// Talks to 1Password through the `op` CLI. With 1Password's desktop app
@@ -145,6 +147,15 @@ public struct OnePasswordCLI: CAVault {
             .map(\.id)
     }
 
+    public func itemExists(itemID: String, vaultID: String) async throws -> Bool {
+        do {
+            _ = try await run(["item", "get", itemID, "--vault", vaultID, "--format", "json"])
+            return true
+        } catch CAError.onePassword(let message) where message.contains("isn't an item") || message.contains("isn’t an item") {
+            return false
+        }
+    }
+
     public func loadIssued(itemID: String, vaultID: String) async throws -> IssuedRecord {
         let data = try await run(["item", "get", itemID, "--vault", vaultID, "--format", "json"])
         let item = try JSONDecoder().decode(Item.self, from: data)
@@ -216,15 +227,16 @@ public struct OnePasswordCLI: CAVault {
 
     private final class Box: @unchecked Sendable { var data = Data() }
 
-    /// Writing to a pipe whose reader has exited raises SIGPIPE, which would kill the
-    /// whole app (and with it a just-issued, unsaved private key). Ignore it so the
-    /// write fails with EPIPE instead.
-    private static let ignoreSIGPIPE: Void = { signal(SIGPIPE, SIG_IGN) }()
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.withLock { value = true } }
+        var isSet: Bool { lock.withLock { value } }
+    }
 
     static let timeout: TimeInterval = 180
 
     private static func runSync(executable: URL, arguments: [String], stdin: Data?) throws -> Data {
-        _ = ignoreSIGPIPE
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -235,13 +247,20 @@ public struct OnePasswordCLI: CAVault {
         // Never leave stdin attached: `op item get` reads item IDs from piped stdin.
         process.standardInput = input ?? FileHandle.nullDevice
 
+        // Writing to a pipe whose reader has exited raises SIGPIPE, which would kill the
+        // whole app (and with it a just-issued, unsaved private key). Turn it off for this
+        // pipe only, so the write fails with EPIPE instead.
+        if let input { _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) }
+
         do { try process.run() } catch { throw CAError.onePasswordNotFound }
 
         // Waiting on the 1Password approval prompt is fine; hanging forever is not.
         // Ask nicely first, then force it.
         let pid = process.processIdentifier
+        let timedOut = Flag()
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [process] in
             guard process.isRunning else { return }
+            timedOut.set()
             process.terminate()
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
                 if process.isRunning { kill(pid, SIGKILL) }
@@ -268,7 +287,9 @@ public struct OnePasswordCLI: CAVault {
 
         guard process.terminationReason == .exit, process.terminationStatus == 0 else {
             if process.terminationReason == .uncaughtSignal {
-                throw CAError.onePassword("op didn’t respond within \(Int(timeout)) seconds and was stopped")
+                throw CAError.onePassword(timedOut.isSet
+                    ? "op didn’t respond within \(Int(timeout)) seconds and was stopped"
+                    : "op was terminated by signal \(process.terminationStatus)")
             }
             throw CAError.onePassword(cleanError(String(decoding: errBox.data, as: UTF8.self),
                                                  status: process.terminationStatus))

@@ -209,12 +209,18 @@ private func tempDir() throws -> URL {
 /// An in-memory vault with switchable failures, for sync edge cases.
 private actor MockVault: CAVault {
     var items: [String: IssuedRecord] = [:]
+    var hiddenFromListing: Set<String> = []  // e.g. its tag was removed
+    var unreadable: Set<String> = []
     var failListing = false
     var failSaving = false
+    var failExistsCheck = false
     var saves = 0
 
     func setFailListing(_ value: Bool) { failListing = value }
     func setFailSaving(_ value: Bool) { failSaving = value }
+    func setFailExistsCheck(_ value: Bool) { failExistsCheck = value }
+    func hide(_ id: String) { hiddenFromListing.insert(id) }
+    func makeUnreadable(_ id: String) { unreadable.insert(id) }
     func delete(_ id: String) { items[id] = nil }
     func add(_ record: IssuedRecord) -> String {
         let id = UUID().uuidString
@@ -238,9 +244,14 @@ private actor MockVault: CAVault {
     }
     func listIssuedItemIDs(vaultID: String) async throws -> [String] {
         if failListing { throw CAError.onePassword("list failed") }
-        return Array(items.keys)
+        return items.keys.filter { !hiddenFromListing.contains($0) }
+    }
+    func itemExists(itemID: String, vaultID: String) async throws -> Bool {
+        if failExistsCheck { throw CAError.onePassword("network error") }
+        return items[itemID] != nil
     }
     func loadIssued(itemID: String, vaultID: String) async throws -> IssuedRecord {
+        if unreadable.contains(itemID) { throw CAError.onePassword("temporarily unavailable") }
         guard var record = items[itemID] else { throw CAError.onePassword("missing") }
         record.opItemID = itemID
         return record
@@ -322,5 +333,137 @@ private actor MockVault: CAVault {
         await vault.setFailSaving(false)
         let retry = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v", log: result.log, vault: vault)
         #expect(retry.pushed == 1 && retry.failures.isEmpty)
+    }
+}
+
+// MARK: - Round 2 (R-numbers)
+
+@Suite struct RoundTwoRegressionTests {
+    let material: CAMaterial
+    let caFingerprint: String
+
+    init() throws {
+        material = try CertificateAuthority.generate(.init(commonName: "Sync CA", algorithm: .p256), passphrase: nil)
+        caFingerprint = try CertificateAuthority.info(certificatePEM: material.certificatePEM).fingerprint
+    }
+
+    func issue(_ name: String) throws -> IssuedRecord {
+        try CertificateAuthority.issue(IssueRequest(names: [name], notAfter: soon), material: material, passphrase: nil).record
+    }
+
+    // R1: an unreadable file that can't be moved aside is never overwritten.
+    @Test func saveNeverOverwritesUnreadableFile() throws {
+        let dir = try tempDir()
+        let store = LocalStore(directory: dir)
+        let url = dir.appendingPathComponent("issued.json")
+        try "{ broken".write(to: url, atomically: true, encoding: .utf8)
+        // Make the directory read-only so moving the file aside fails.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+        #expect(throws: LocalStoreError.self) { try store.loadLog() }
+        #expect(throws: (any Error).self) { try store.saveLog([]) }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "{ broken")
+    }
+
+    // R2: if an unknown remote item can't be read, pending records aren't pushed (it may be their copy).
+    @Test func unreadableRemoteItemBlocksPushes() async throws {
+        let vault = MockVault()
+        let record = try issue("a.test")
+        let remoteID = await vault.add(record)  // saved earlier, but the ID was never recorded locally
+        await vault.makeUnreadable(remoteID)
+        let result = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v", log: [record], vault: vault)
+        #expect(result.pushed == 0)
+        #expect(await vault.items.count == 1)
+        #expect(!result.failures.isEmpty)
+    }
+
+    // R4: missing from the (tag-filtered) list isn't deletion; only a confirmed missing item is.
+    @Test func onlyConfirmedDeletionsRemoveRecords() async throws {
+        let vault = MockVault()
+        let first = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v",
+                                            log: [try issue("untagged.test"), try issue("flaky.test")], vault: vault)
+        let untagged = try #require(first.log.first { $0.commonName == "untagged.test" }?.opItemID)
+        await vault.hide(untagged)
+        var second = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v", log: first.log, vault: vault)
+        #expect(second.removed == 0 && second.log.count == 2)
+
+        await vault.delete(untagged)
+        await vault.setFailExistsCheck(true)
+        second = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v", log: first.log, vault: vault)
+        #expect(second.removed == 0 && !second.failures.isEmpty)
+
+        await vault.setFailExistsCheck(false)
+        second = await IssuanceSync.sync(caFingerprint: caFingerprint, vaultID: "v", log: first.log, vault: vault)
+        #expect(second.removed == 1)
+        #expect(second.log.map(\.commonName) == ["flaky.test"])
+    }
+
+    // R5: merge takes a changed item ID from the sync when nothing else changed it.
+    @Test func mergeAdoptsReplacementItemID() throws {
+        var record = try issue("a.test")
+        record.opItemID = "deleted"
+        var synced = record
+        synced.opItemID = "replacement"
+        let result = IssuanceSync.Result(log: [synced])
+        #expect(IssuanceSync.merge(result, snapshot: [record], into: [record]).first?.opItemID == "replacement")
+    }
+
+    // R3: path length limits and key usage apply to every certificate in the chain.
+    @Test func pathLengthAndKeyUsageAreEnforced() throws {
+        let dir = try tempDir()
+        func path(_ name: String) -> String { dir.appendingPathComponent(name).path }
+        try """
+        [root]
+        basicConstraints = critical,CA:TRUE,pathlen:0
+        keyUsage = critical,keyCertSign,cRLSign
+        [intermediate]
+        basicConstraints = critical,CA:TRUE,pathlen:0
+        keyUsage = critical,keyCertSign,cRLSign
+        """.write(toFile: path("ext.cnf"), atomically: true, encoding: .utf8)
+        try openssl(["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                     "-keyout", path("root.key"), "-out", path("root.crt"), "-days", "30", "-subj", "/CN=Root",
+                     "-extensions", "root", "-config", path("ext.cnf")])
+        try openssl(["req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                     "-keyout", path("int.key"), "-out", path("int.csr"), "-subj", "/CN=Intermediate"])
+        try openssl(["x509", "-req", "-in", path("int.csr"), "-CA", path("root.crt"), "-CAkey", path("root.key"),
+                     "-out", path("int.crt"), "-days", "20", "-extfile", path("ext.cnf"), "-extensions", "intermediate"])
+        let chain = try String(contentsOfFile: path("int.crt"), encoding: .utf8) + String(contentsOfFile: path("root.crt"), encoding: .utf8)
+        let key = try String(contentsOfFile: path("int.key"), encoding: .utf8)
+        // The root's pathlen:0 forbids any intermediate below it.
+        #expect(throws: CAError.self) {
+            try CertificateAuthority.prepareImport(certificatePEM: chain, keyPEM: key, currentPassphrase: nil, newPassphrase: nil)
+        }
+        let smuggled = CAMaterial(certificatePEM: chain, keyPEM: key)
+        #expect(throws: CAError.self) {
+            try CertificateAuthority.issue(IssueRequest(names: ["a.test"], notAfter: soon), material: smuggled, passphrase: nil)
+        }
+        // A leaf certificate and its key can't act as a CA, even if they reach 1Password some other way.
+        let leaf = try CertificateAuthority.issue(IssueRequest(names: ["leaf.test"], notAfter: soon), material: material, passphrase: nil)
+        let fakeCA = CAMaterial(certificatePEM: leaf.certificatePEM, keyPEM: leaf.privateKeyPEM)
+        #expect(throws: CAError.self) {
+            try CertificateAuthority.issue(IssueRequest(names: ["a.test"], notAfter: soon), material: fakeCA, passphrase: nil)
+        }
+    }
+
+    // R6
+    @Test func longFileNamesCanBeWrittenPrivately() throws {
+        let name = String(repeating: "a", count: 220) + ".key"
+        let url = try tempDir().appendingPathComponent(name)
+        try PrivateFile.write(Data("k".utf8), to: url)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    // R7: a process killed by a signal right away isn't reported as a timeout.
+    @Test func signalIsNotReportedAsTimeout() async throws {
+        let script = try tempDir().appendingPathComponent("die.sh")
+        try "#!/bin/sh\nkill -TERM $$\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        do {
+            _ = try await OnePasswordCLI(executablePath: script.path).run(["vault", "list"])
+            Issue.record("expected an error")
+        } catch CAError.onePassword(let message) {
+            #expect(message.contains("signal"))
+            #expect(!message.contains("didn’t respond"))
+        }
     }
 }

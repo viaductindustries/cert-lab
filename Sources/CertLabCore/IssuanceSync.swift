@@ -14,10 +14,12 @@ public enum IssuanceSync {
 
     /// 1. List the vault. Without a complete inventory nothing else is safe, so stop on failure.
     /// 2. Drop local records whose 1Password item was deleted (deletion in 1Password is how
-    ///    certificates are removed from the log on every Mac).
+    ///    certificates are removed from the log on every Mac). Missing from the list isn't
+    ///    proof (e.g. its tag was removed), so each one is confirmed with 1Password first.
     /// 3. Pull items not known locally; match them to unsynced local records by certificate
     ///    fingerprint, so a save that succeeded but wasn't recorded isn't pushed twice.
-    /// 4. Push records that still aren't in 1Password.
+    /// 4. Push records that still aren't in 1Password, but only if every remote item could
+    ///    be read: an unreadable one might be an earlier copy of a pending record.
     /// Progress is kept even when a step fails; failures are reported in `failures`.
     public static func sync(caFingerprint: String, vaultID: String, log: [IssuedRecord],
                             vault: any CAVault) async -> Result {
@@ -32,13 +34,21 @@ public enum IssuanceSync {
         }
         let remote = Set(remoteIDs)
 
-        let before = result.log.count
-        result.log.removeAll { record in
-            record.caFingerprint == caFingerprint && record.opItemID.map { !remote.contains($0) } == true
+        var deleted = Set<String>()
+        for record in result.log where record.caFingerprint == caFingerprint {
+            guard let itemID = record.opItemID, !remote.contains(itemID) else { continue }
+            do {
+                if try await !vault.itemExists(itemID: itemID, vaultID: vaultID) { deleted.insert(itemID) }
+            } catch {
+                result.failures.append("Couldn’t check \(record.commonName) in 1Password: \(error.localizedDescription)")
+            }
         }
+        let before = result.log.count
+        result.log.removeAll { $0.opItemID.map(deleted.contains) == true }
         result.removed = before - result.log.count
 
         let known = Set(result.log.compactMap(\.opItemID))
+        var unreadable = 0
         for itemID in remoteIDs where !known.contains(itemID) {
             do {
                 let record = try await vault.loadIssued(itemID: itemID, vaultID: vaultID)
@@ -50,8 +60,14 @@ public enum IssuanceSync {
                     result.pulled += 1
                 }
             } catch {
+                unreadable += 1
                 result.failures.append("Item \(itemID): \(error.localizedDescription)")
             }
+        }
+
+        guard unreadable == 0 else {
+            result.failures.append("Unsynced certificates weren’t saved this time, to avoid duplicating one that may already be in 1Password.")
+            return result
         }
 
         for index in result.log.indices
@@ -70,12 +86,16 @@ public enum IssuanceSync {
     /// records added or changed while the sync was running aren't lost.
     public static func merge(_ result: Result, snapshot: [IssuedRecord], into current: [IssuedRecord]) -> [IssuedRecord] {
         let synced = Dictionary(result.log.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let before = Dictionary(snapshot.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let snapshotIDs = Set(snapshot.map(\.id))
         var merged: [IssuedRecord] = []
         for record in current {
             if let updated = synced[record.id] {
                 var record = record
-                if record.opItemID == nil { record.opItemID = updated.opItemID }
+                // Take the sync's item ID unless something else changed it meanwhile.
+                if record.opItemID == before[record.id]?.opItemID || record.opItemID == nil {
+                    record.opItemID = updated.opItemID
+                }
                 merged.append(record)
             } else if !snapshotIDs.contains(record.id) {
                 merged.append(record)  // added during the sync

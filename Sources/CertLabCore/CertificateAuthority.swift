@@ -281,15 +281,26 @@ public enum CertificateAuthority {
         return (dns, ips)
     }
 
-    /// Each certificate after the first must be a CA that issued (and signed) the one before it.
+    /// Every certificate must be a CA allowed to sign certificates. Each one after the first
+    /// must have issued (and signed) the one before it, and its path length limit must allow
+    /// the CAs below it plus the leaf we're about to issue.
     static func validateChain(_ chain: [Certificate]) throws {
+        for (index, certificate) in chain.enumerated() {
+            guard case .isCertificateAuthority(let maxPathLength) = try certificate.extensions.basicConstraints else {
+                throw CAError.invalidCertificate("“\(certificate.subject)” is not a CA certificate.")
+            }
+            if let usage = try certificate.extensions.keyUsage, !usage.keyCertSign {
+                throw CAError.invalidCertificate("“\(certificate.subject)” isn’t allowed to sign certificates.")
+            }
+            // `index` CA certificates sit between this one and the leaf.
+            if let maxPathLength, index > maxPathLength {
+                throw CAError.invalidCertificate("“\(certificate.subject)” allows at most \(maxPathLength) intermediate CA(s) below it, but this chain has \(index).")
+            }
+        }
         for (child, parent) in zip(chain, chain.dropFirst()) {
             guard child.issuer == parent.subject,
                   parent.publicKey.isValidSignature(child.signature, for: child) else {
                 throw CAError.invalidCertificate("the chain is out of order: “\(parent.subject)” didn’t sign “\(child.subject)”. List the CA certificate first, then each issuer in turn.")
-            }
-            guard case .isCertificateAuthority = try parent.extensions.basicConstraints else {
-                throw CAError.invalidCertificate("“\(parent.subject)” in the chain is not a CA.")
             }
         }
     }

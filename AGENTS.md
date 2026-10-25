@@ -36,7 +36,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - Copying only works through the Copy button, because the key text isn't selectable. That marks the clipboard entry as concealed, and clears it after 90 seconds or when the app quits.
   - Exported `.key` files are written with `PrivateFile.write`, which creates them as `0600` before writing any bytes.
   - While a certificate is being issued, the sheet can't be cancelled and menu commands can't replace it. Closing the result without saving the key needs confirmation.
-- **Imported chains:** the CA certificate comes first, followed by each issuer in turn. The order and signatures are checked. Name constraints and validity from *every* certificate in the chain apply when issuing.
+- **Imported chains:** the CA certificate comes first, followed by each issuer in turn. The order and signatures are checked, and every certificate must be a CA with `keyCertSign` whose path length allows the CAs below it. This is checked at import *and* at issue time. Name constraints and validity from *every* certificate in the chain apply when issuing.
 - **Certificate defaults:**
   - CAs get `pathLen 0` and optional name constraints. Name constraints are also enforced in the app before signing.
   - Leaf certificates get SANs and `serverAuth` (plus `clientAuth` when asked), SKI/AKI, and a common name equal to the first entry typed, whether it's a hostname or an IP.
@@ -66,18 +66,20 @@ Existing users' data depends on these names, so don't rename them without a migr
   - `issued.json`: a cache of the issuance log
 - An `IssuedRecord` with `opItemID == nil` hasn't reached 1Password yet. **Sync** (`IssuanceSync`) works in this order:
   1. List the vault. If listing fails, stop without changing anything.
-  2. Drop local records whose item was deleted in 1Password. Deleting the item is how a certificate is removed from the log on every Mac.
+  2. Drop local records whose item was deleted in 1Password. Deleting the item is how a certificate is removed from the log on every Mac. Being missing from the tag-filtered list isn't proof, so each one is confirmed with `itemExists` first; any error keeps the record.
   3. Pull unknown items, matching them to unsynced local records by certificate fingerprint so nothing is pushed twice.
-  4. Push what's still pending.
+  4. Push what's still pending, but only if every unknown remote item could be read. An unreadable one might already be a copy of a pending record.
 - Sync results are **merged** into the current log (`IssuanceSync.merge`), never assigned over it, because issuing or another sync can change the log while a sync is awaiting `op`.
-- Local JSON that can't be decoded is moved aside to `*.unreadable-<timestamp>.json`, never overwritten.
+- Local JSON that can't be decoded is moved aside to `*.unreadable-<timestamp>-<id>.json`. If it can't be moved, saving refuses to overwrite it.
 - `CERT_LAB_DATA_DIR` points the app at a different data folder, e.g. for demo data. Passing `-opPath /path/to/op` as a launch argument overrides the `op` binary.
 
 ## Testing
 
 - `swift test` covers the crypto, which is checked against OpenSSL (Homebrew `openssl` if present, otherwise `/usr/bin/openssl`). It also covers the `op` integration, using a fake `op` written in Python (`OnePasswordCLITests.fakeOp`) that mimics the CLI's JSON output.
 - `ReviewRegressionTests.swift` pins the fixes from the first code review. Keep it passing.
-- The `op` wrapper ignores SIGPIPE and reads stdout and stderr while it writes stdin. Otherwise an `op` that exits early would kill the app, along with any unsaved key.
+- The `op` wrapper sets `F_SETNOSIGPIPE` on its stdin pipe, rather than ignoring SIGPIPE app-wide, and reads stdout and stderr while it writes stdin. Otherwise an `op` that exits early would kill the app, along with any unsaved key.
+  - A hung `op` gets SIGTERM, then SIGKILL 5 seconds later.
+  - There's a known, accepted race: if `op` exits and its PID is reused within microseconds of the liveness check, the SIGKILL could hit another process. Closing it would mean replacing `Process` with our own `posix_spawn`/`waitpid` supervisor.
 - If you change how `op` is called, update the fake to match the real CLI's behaviour. Verify real `op` behaviour with `--help` or by asking the user. Never run commands that create or change items in their vaults.
 - To check UI changes, run the app with demo data (`CERT_LAB_DATA_DIR` plus a fake `op` via `-opPath`). Screen recording may not be available, so a temporary in-app snapshot is fine. Remove it before committing.
 

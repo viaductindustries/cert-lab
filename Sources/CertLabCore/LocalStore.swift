@@ -49,9 +49,9 @@ public struct LocalStore: Sendable {
     private var logURL: URL { directory.appendingPathComponent("issued.json") }
 
     public func loadAuthorities() throws -> [CARecord] { try load(casURL) ?? [] }
-    public func saveAuthorities(_ records: [CARecord]) throws { try save(records, to: casURL) }
+    public func saveAuthorities(_ records: [CARecord]) throws { try save(records, to: casURL, as: [CARecord].self) }
     public func loadLog() throws -> [IssuedRecord] { try load(logURL) ?? [] }
-    public func saveLog(_ records: [IssuedRecord]) throws { try save(records, to: logURL) }
+    public func saveLog(_ records: [IssuedRecord]) throws { try save(records, to: logURL, as: [IssuedRecord].self) }
 
     /// Loads a JSON file. A file that exists but can't be decoded is moved aside (never
     /// overwritten) and reported, so its contents can be recovered by hand.
@@ -60,16 +60,34 @@ public struct LocalStore: Sendable {
         do {
             return try JSONCoding.decoder().decode(T.self, from: Data(contentsOf: url))
         } catch {
-            let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
-                .dateTimeSeparator(.standard)).replacingOccurrences(of: ":", with: "")
-            let aside = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
-            try? FileManager.default.moveItem(at: url, to: aside)
-            throw LocalStoreError.unreadable(file: url.lastPathComponent, movedTo: aside, underlying: error.localizedDescription)
+            let underlying = error.localizedDescription
+            let aside = try moveAside(url, underlying: underlying)
+            throw LocalStoreError.unreadable(file: url.lastPathComponent, movedTo: aside, underlying: underlying)
         }
     }
 
-    private func save<T: Encodable>(_ value: T, to url: URL) throws {
+    /// Moves an unreadable file to a unique name next to it. Throws if it can't, so the
+    /// caller never goes on to replace data that wasn't preserved.
+    private func moveAside(_ url: URL, underlying: String) throws -> URL {
+        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
+            .dateTimeSeparator(.standard)).replacingOccurrences(of: ":", with: "")
+        let unique = UUID().uuidString.prefix(8)
+        let aside = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp)-\(unique).json")
+        do {
+            try FileManager.default.moveItem(at: url, to: aside)
+        } catch {
+            throw LocalStoreError.unreadableNotMoved(file: url.lastPathComponent, underlying: underlying)
+        }
+        return aside
+    }
+
+    /// Refuses to replace an existing file that can't be decoded, unless it can first be moved aside.
+    private func save<T: Codable>(_ value: T, to url: URL, as type: T.Type) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: url.path),
+           (try? JSONCoding.decoder().decode(T.self, from: Data(contentsOf: url))) == nil {
+            _ = try moveAside(url, underlying: "found unreadable while saving")
+        }
         try JSONCoding.encoder().encode(value).write(to: url, options: .atomic)
     }
 }
@@ -103,11 +121,14 @@ enum JSONCoding {
 
 public enum LocalStoreError: LocalizedError {
     case unreadable(file: String, movedTo: URL, underlying: String)
+    case unreadableNotMoved(file: String, underlying: String)
 
     public var errorDescription: String? {
         switch self {
         case .unreadable(let file, let movedTo, let underlying):
             "\(file) couldn’t be read (\(underlying)). It was moved to \(movedTo.path) so nothing is lost; Cert Lab is starting with an empty copy."
+        case .unreadableNotMoved(let file, let underlying):
+            "\(file) couldn’t be read (\(underlying)) and couldn’t be moved aside. It has been left untouched, and changes to it won’t be saved until it’s fixed or removed."
         }
     }
 }
