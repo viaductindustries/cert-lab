@@ -28,7 +28,7 @@ There are no pre-built releases yet, so you build Cert Lab yourself. It takes a 
 
 You'll need:
 
-- **Xcode 16 or later** (from the App Store), or a Swift 6 toolchain. Check with `swift --version`. If you've just installed Xcode, open it once to finish setup, or run `sudo xcode-select -s /Applications/Xcode.app`.
+- **Xcode 16.3 or later** (from the App Store), or a Swift 6.1+ toolchain. Check with `swift --version`. If you've just installed Xcode, open it once to finish setup, or run `sudo xcode-select -s /Applications/Xcode.app`.
 - **The 1Password app and CLI**, as described under [Requirements](#requirements).
 
 Then:

@@ -25,12 +25,16 @@ struct IssueView: View {
         _keyAlgorithm = State(initialValue: prefill?.keyAlgorithm ?? .p256)
         _clientAuth = State(initialValue: prefill?.includeClientAuth ?? false)
         let days = prefill.map { Int(($0.notAfter.timeIntervalSince($0.notBefore) / 86400).rounded()) } ?? 365
-        _expiry = State(initialValue: Self.date(inDays: days))
+        _expiry = State(initialValue: Self.expiry(forLifetimeDays: days))
     }
 
-    private static func date(inDays days: Int) -> Date {
-        Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? Date()
+    /// Certificates start `backdate` before now, so a lifetime of N days ends N days after that.
+    private static func expiry(forLifetimeDays days: Int) -> Date {
+        Date().addingTimeInterval(Double(days) * 86400 - CertificateAuthority.backdate)
     }
+
+    /// The validity period the certificate will actually have.
+    private var lifetime: TimeInterval { expiry.timeIntervalSinceNow + CertificateAuthority.backdate }
 
     /// Read live from the model: issuing can discover that the key's protection changed.
     private var needsPassphrase: Bool { model.authorities.first { $0.id == ca.id }?.keyEncrypted ?? ca.keyEncrypted }
@@ -39,10 +43,7 @@ struct IssueView: View {
         Result { try CertificateAuthority.validate(names: Names.tokens(namesText), certificatePEM: ca.certificatePEM) }
     }
 
-    private var days: Int {
-        Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()),
-                                        to: Calendar.current.startOfDay(for: expiry)).day ?? 0
-    }
+    private var days: Int { Int((lifetime / 86400).rounded()) }
 
     private var canIssue: Bool {
         !working && (!needsPassphrase || !passphrase.isEmpty) && (try? parsed.get()) != nil && expiryError == nil
@@ -79,7 +80,8 @@ struct IssueView: View {
                                 if days == value {
                                     Button(label) {}.buttonStyle(.borderedProminent).controlSize(.small)
                                 } else {
-                                    Button(label) { expiry = Self.date(inDays: value) }.buttonStyle(.bordered).controlSize(.small)
+                                    Button(label) { expiry = Self.expiry(forLifetimeDays: value) }
+                                        .buttonStyle(.bordered).controlSize(.small)
                                 }
                             }
                         }
@@ -121,24 +123,28 @@ struct IssueView: View {
                 }
             } trailing: {
                 if working { ProgressView().controlSize(.small) }
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(working)  // closing now would lose the key being issued
                 Button("Issue Certificate", action: issue)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canIssue)
             }
         }
         .frame(width: 560, height: needsPassphrase ? 720 : 650)
+        .interactiveDismissDisabled(working)
     }
 
     @ViewBuilder private var namesPreview: some View {
         switch parsed {
         case .success(let names):
+            let commonName = Names.commonName(for: Names.tokens(namesText))
             FlowLayout(spacing: 6) {
-                ForEach(Array(names.dns.enumerated()), id: \.element) { index, name in
-                    Chip(text: name, systemImage: "globe", tint: index == 0 ? .accentColor : .secondary)
+                ForEach(names.dns, id: \.self) { name in
+                    Chip(text: name, systemImage: "globe", tint: name == commonName ? .accentColor : .secondary)
                 }
-                ForEach(Array(names.ips.enumerated()), id: \.element) { index, ip in
-                    Chip(text: ip, systemImage: "network", tint: names.dns.isEmpty && index == 0 ? .accentColor : .secondary)
+                ForEach(names.ips, id: \.self) { ip in
+                    Chip(text: ip, systemImage: "network", tint: ip == commonName ? .accentColor : .secondary)
                 }
             }
         case .failure(let error):
@@ -157,7 +163,7 @@ struct IssueView: View {
 
     private var expiryWarning: String? {
         if let expiryError { return expiryError }
-        if days > CertificateAuthority.appleMaximumValidityDays {
+        if lifetime > Double(CertificateAuthority.appleMaximumValidityDays) * 86400 {
             return "Apple devices reject TLS certificates valid for more than 825 days (this is \(days))."
         }
         return nil
@@ -196,6 +202,7 @@ struct IssuedResultView: View {
     @State private var part = Part.key
     @State private var keySaved = false
     @State private var exportedTo: URL?
+    @State private var exportError: String?
     @State private var confirmDiscard = false
 
     private var baseName: String { FileExport.baseName(for: bundle.record.commonName) }
@@ -255,9 +262,11 @@ struct IssuedResultView: View {
 
                 Text(caption(part)).font(.callout).foregroundStyle(.secondary)
 
-                PEMTextView(text: text(part))
+                PEMTextView(text: text(part), selectable: part != .key)
 
-                if let exportedTo {
+                if let exportError {
+                    ErrorText(message: exportError)
+                } else if let exportedTo {
                     Label("Exported to \(exportedTo.path(percentEncoded: false))", systemImage: "folder")
                         .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
@@ -269,7 +278,7 @@ struct IssuedResultView: View {
                     if part == .key { keySaved = true }
                 }
                 Button("Export Files…", systemImage: "square.and.arrow.up", action: export)
-                    .help("Saves \(baseName).key, \(baseName).crt, \(baseName).fullchain.crt and ca.crt")
+                    .help("Saves \(baseName).key, \(baseName).crt, \(baseName).fullchain.crt and \(baseName).ca.crt")
             } trailing: {
                 Button("Done") {
                     if keySaved { onDone() } else { confirmDiscard = true }
@@ -292,14 +301,16 @@ struct IssuedResultView: View {
                 .init(name: "\(baseName).key", contents: bundle.privateKeyPEM, isSecret: true),
                 .init(name: "\(baseName).crt", contents: bundle.certificatePEM),
                 .init(name: "\(baseName).fullchain.crt", contents: bundle.fullChainPEM),
-                .init(name: "ca.crt", contents: bundle.chainPEM),
+                .init(name: "\(baseName).ca.crt", contents: bundle.chainPEM),
             ]
             if let folder = try FileExport.exportToFolder(files, message: "Choose a folder for the key and certificates") {
                 keySaved = true
                 exportedTo = folder
+                exportError = nil
             }
         } catch {
-            model.alert = "Export failed: \(error.localizedDescription)"
+            // Shown in this sheet: an alert on the window behind it could go unseen.
+            exportError = "Export failed: \(error.localizedDescription)"
         }
     }
 }

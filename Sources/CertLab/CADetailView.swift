@@ -293,6 +293,7 @@ struct CertificateDetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     var record: IssuedRecord
+    @State private var exportError: String?
 
     var body: some View {
         let status = ExpiryStatus(notAfter: record.notAfter)
@@ -344,9 +345,14 @@ struct CertificateDetailView: View {
             SheetFooter {
                 CopyButton(title: "Copy") { record.certificatePEM }
                 Button("Export…", systemImage: "square.and.arrow.up") {
-                    do { try FileExport.save(record.certificatePEM, suggestedName: FileExport.baseName(for: record.commonName) + ".crt") }
-                    catch { model.alert = error.localizedDescription }
+                    do {
+                        try FileExport.save(record.certificatePEM, suggestedName: FileExport.baseName(for: record.commonName) + ".crt")
+                        exportError = nil
+                    } catch {
+                        exportError = "Export failed: \(error.localizedDescription)"
+                    }
                 }
+                ErrorText(message: exportError)
             } trailing: {
                 if let ca = model.authorities.first(where: { $0.fingerprint == record.caFingerprint }) {
                     Button("Issue Again…") { model.sheet = .issue(ca, prefill: record) }

@@ -23,6 +23,13 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "CertLab", dependencies: ["CertLabCore"]),
-        .testTarget(name: "CertLabCoreTests", dependencies: ["CertLabCore"]),
+        .testTarget(
+            name: "CertLabCoreTests",
+            dependencies: [
+                "CertLabCore",
+                .product(name: "X509", package: "swift-certificates"),
+                .product(name: "SwiftASN1", package: "swift-asn1"),
+            ]
+        ),
     ]
 )

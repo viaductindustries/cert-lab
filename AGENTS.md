@@ -32,10 +32,16 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - The vault holds the CA item and one Secure Note per issued certificate. It never holds a leaf private key.
 - **The CA passphrase is optional and off by default.** It only adds security if it's kept *outside* the CA's vault, and the UI says so. When it's on, the key is stored as encrypted PKCS#8 (PBES2, PBKDF2-SHA256 with 600k iterations, AES-256-CBC), which OpenSSL can read. When it's off, the key is plain PKCS#8 in a concealed field.
 - **Every issuance loads the CA from 1Password.** The CA key is never cached in memory between issuances and never written to disk.
-- **Leaf private keys are shown exactly once.** They aren't saved locally, in 1Password or in the log. Copying marks them as concealed on the clipboard and clears the clipboard after 90 seconds. Exported `.key` files get mode 0600. Closing the result sheet without saving the key needs confirmation.
+- **Leaf private keys are shown exactly once.** They aren't saved locally, in 1Password or in the log.
+  - Copying only works through the Copy button, because the key text isn't selectable. That marks the clipboard entry as concealed, and clears it after 90 seconds or when the app quits.
+  - Exported `.key` files are written with `PrivateFile.write`, which creates them as `0600` before writing any bytes.
+  - While a certificate is being issued, the sheet can't be cancelled and menu commands can't replace it. Closing the result without saving the key needs confirmation.
+- **Imported chains:** the CA certificate comes first, followed by each issuer in turn. The order and signatures are checked. Name constraints and validity from *every* certificate in the chain apply when issuing.
 - **Certificate defaults:**
   - CAs get `pathLen 0` and optional name constraints. Name constraints are also enforced in the app before signing.
-  - Leaf certificates get SANs and `serverAuth` (plus `clientAuth` when asked), SKI/AKI, and a common name equal to the first SAN.
+  - Leaf certificates get SANs and `serverAuth` (plus `clientAuth` when asked), SKI/AKI, and a common name equal to the first entry typed, whether it's a hostname or an IP.
+  - Serials are 20 random octets with the top bit clear (`randomSerial`), the RFC 5280 maximum. Don't use `Certificate.SerialNumber()`, which can produce 21.
+  - Wildcards are checked against excluded subtrees by overlap, not just containment.
   - The app warns about leaf lifetimes over 825 days, because Apple devices reject them.
 - **The scope is deliberately small.** No revocation (CRL/OCSP), no ACME and no intermediate-CA creation. Discuss before adding any of them.
 
@@ -58,12 +64,20 @@ Existing users' data depends on these names, so don't rename them without a migr
 - Data lives in `~/Library/Application Support/Cert Lab/`, which is moved automatically from the old `CA Manager/` folder:
   - `authorities.json`: linked CAs (public certificate and 1Password reference only)
   - `issued.json`: a cache of the issuance log
-- An `IssuedRecord` with `opItemID == nil` hasn't reached 1Password yet. **Sync** pushes those, then pulls items it doesn't know yet. See `IssuanceSync`.
+- An `IssuedRecord` with `opItemID == nil` hasn't reached 1Password yet. **Sync** (`IssuanceSync`) works in this order:
+  1. List the vault. If listing fails, stop without changing anything.
+  2. Drop local records whose item was deleted in 1Password. Deleting the item is how a certificate is removed from the log on every Mac.
+  3. Pull unknown items, matching them to unsynced local records by certificate fingerprint so nothing is pushed twice.
+  4. Push what's still pending.
+- Sync results are **merged** into the current log (`IssuanceSync.merge`), never assigned over it, because issuing or another sync can change the log while a sync is awaiting `op`.
+- Local JSON that can't be decoded is moved aside to `*.unreadable-<timestamp>.json`, never overwritten.
 - `CERT_LAB_DATA_DIR` points the app at a different data folder, e.g. for demo data. Passing `-opPath /path/to/op` as a launch argument overrides the `op` binary.
 
 ## Testing
 
 - `swift test` covers the crypto, which is checked against OpenSSL (Homebrew `openssl` if present, otherwise `/usr/bin/openssl`). It also covers the `op` integration, using a fake `op` written in Python (`OnePasswordCLITests.fakeOp`) that mimics the CLI's JSON output.
+- `ReviewRegressionTests.swift` pins the fixes from the first code review. Keep it passing.
+- The `op` wrapper ignores SIGPIPE and reads stdout and stderr while it writes stdin. Otherwise an `op` that exits early would kill the app, along with any unsaved key.
 - If you change how `op` is called, update the fake to match the real CLI's behaviour. Verify real `op` behaviour with `--help` or by asking the user. Never run commands that create or change items in their vaults.
 - To check UI changes, run the app with demo data (`CERT_LAB_DATA_DIR` plus a fake `op` via `-opPath`). Screen recording may not be available, so a temporary in-app snapshot is fine. Remove it before committing.
 

@@ -79,11 +79,12 @@ public enum EncryptedPKCS8 {
     /// Returns the plaintext PKCS#8 PrivateKeyInfo DER.
     public static func decrypt(_ der: Data, passphrase: String) throws -> Data {
         let (params, ciphertext) = try parse(der)
-        let key = try deriveKey(passphrase: passphrase, salt: params.salt, iterations: params.iterations,
-                                prf: params.prf, length: params.keyLength ?? params.cipherKeySize)
-        guard key.count == params.cipherKeySize else {
-            throw CAError.unsupportedEncryption("key length does not match cipher")
+        // Validate before allocating anything sized by attacker-controlled input.
+        if let keyLength = params.keyLength, keyLength != params.cipherKeySize {
+            throw CAError.unsupportedEncryption("PBKDF2 key length \(keyLength) does not match the cipher")
         }
+        let key = try deriveKey(passphrase: passphrase, salt: params.salt, iterations: params.iterations,
+                                prf: params.prf, length: params.cipherKeySize)
         do {
             return try aesCBC(CCOperation(kCCDecrypt), key: key, iv: params.iv, data: ciphertext)
         } catch {

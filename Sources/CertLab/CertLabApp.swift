@@ -20,12 +20,16 @@ struct CertLabApp: App {
                     if let ca = model.selectedCA { model.sheet = .issue(ca, prefill: nil) }
                 }
                 .keyboardShortcut("n")
-                .disabled(model.selectedCA == nil)
+                .disabled(model.selectedCA == nil || model.sheet != nil)
                 Divider()
                 Button("New Certificate Authority…") { model.sheet = .newCA }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(model.sheet != nil)
+                // Opening a sheet replaces the current one, which could discard an unsaved key.
                 Button("Import Certificate Authority…") { model.sheet = .importCA }
+                    .disabled(model.sheet != nil)
                 Button("Link CA from 1Password…") { model.sheet = .linkCA }
+                    .disabled(model.sheet != nil)
             }
             CommandGroup(after: .toolbar) {
                 Button("Sync with 1Password") {
@@ -51,4 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Don't leave a copied private key behind once the 90-second timer can't run.
+        MainActor.assumeIsolated { Clipboard.clearSecretIfPresent() }
+    }
 }

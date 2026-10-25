@@ -57,12 +57,11 @@ final class AppModel {
     @ObservationIgnored private var infoCache: [String: CAInfo] = [:]
 
     init() {
-        do {
-            authorities = try store.loadAuthorities()
-            log = try store.loadLog()
-        } catch {
-            alert = "Couldn’t read saved data from \(store.directory.path): \(error.localizedDescription)"
-        }
+        // Loaded independently: a problem with one file mustn't block the other.
+        var problems: [String] = []
+        do { authorities = try store.loadAuthorities() } catch { problems.append(error.localizedDescription) }
+        do { log = try store.loadLog() } catch { problems.append(error.localizedDescription) }
+        if !problems.isEmpty { alert = problems.joined(separator: "\n\n") }
         selection = authorities.first?.id
     }
 
@@ -139,13 +138,16 @@ final class AppModel {
     /// Saves unsynced certificates to the CA's vault and pulls ones issued elsewhere.
     /// Returns a short human-readable summary.
     func sync(_ ca: CARecord) async throws -> String {
-        let result = try await IssuanceSync.sync(caFingerprint: ca.fingerprint, vaultID: ca.item.vaultID,
-                                                 log: log, vault: vault())
-        log = result.log
+        let snapshot = log
+        let result = await IssuanceSync.sync(caFingerprint: ca.fingerprint, vaultID: ca.item.vaultID,
+                                             log: snapshot, vault: try vault())
+        // Merge rather than replace: issuing or another sync may have changed the log meanwhile.
+        log = IssuanceSync.merge(result, snapshot: snapshot, into: log)
         persistLog()
         var parts: [String] = []
         if result.pushed > 0 { parts.append("saved \(result.pushed) to 1Password") }
         if result.pulled > 0 { parts.append("found \(result.pulled) new") }
+        if result.removed > 0 { parts.append("removed \(result.removed) deleted in 1Password") }
         if !result.failures.isEmpty {
             throw CAError.onePassword("sync incomplete. " + result.failures.joined(separator: "; "))
         }
@@ -240,7 +242,12 @@ final class AppModel {
         } catch {
             warning = "Not yet saved to 1Password (\(error.localizedDescription)). It’s in the local log and will be saved on the next Sync."
         }
-        log.append(record)
+        // A sync running meanwhile may already have pulled this certificate from 1Password.
+        if let index = log.firstIndex(where: { $0.fingerprint == record.fingerprint }) {
+            if log[index].opItemID == nil { log[index].opItemID = record.opItemID }
+        } else {
+            log.append(record)
+        }
         persistLog()
         return IssueResult(bundle: bundle, warning: warning)
     }

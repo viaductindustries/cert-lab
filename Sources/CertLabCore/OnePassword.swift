@@ -216,7 +216,15 @@ public struct OnePasswordCLI: CAVault {
 
     private final class Box: @unchecked Sendable { var data = Data() }
 
+    /// Writing to a pipe whose reader has exited raises SIGPIPE, which would kill the
+    /// whole app (and with it a just-issued, unsaved private key). Ignore it so the
+    /// write fails with EPIPE instead.
+    private static let ignoreSIGPIPE: Void = { signal(SIGPIPE, SIG_IGN) }()
+
+    static let timeout: TimeInterval = 180
+
     private static func runSync(executable: URL, arguments: [String], stdin: Data?) throws -> Data {
+        _ = ignoreSIGPIPE
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -230,29 +238,42 @@ public struct OnePasswordCLI: CAVault {
         do { try process.run() } catch { throw CAError.onePasswordNotFound }
 
         // Waiting on the 1Password approval prompt is fine; hanging forever is not.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 180) { [process] in
-            if process.isRunning { process.terminate() }
+        // Ask nicely first, then force it.
+        let pid = process.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [process] in
+            guard process.isRunning else { return }
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                if process.isRunning { kill(pid, SIGKILL) }
+            }
+        }
+
+        // Drain both outputs while writing input, so neither side can block the other.
+        let outBox = Box(), errBox = Box()
+        let group = DispatchGroup()
+        for (pipe, box) in [(stdout, outBox), (stderr, errBox)] {
+            group.enter()
+            DispatchQueue.global().async {
+                box.data = pipe.fileHandleForReading.readDataToEndOfFile()
+                group.leave()
+            }
         }
         if let input, let stdin {
-            input.fileHandleForWriting.write(stdin)
+            // Fails with EPIPE if the process exits early; its exit status reports why.
+            try? input.fileHandleForWriting.write(contentsOf: stdin)
             try? input.fileHandleForWriting.close()
         }
-        let errBox = Box()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global().async {
-            errBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
         group.wait()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else {
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+            if process.terminationReason == .uncaughtSignal {
+                throw CAError.onePassword("op didn’t respond within \(Int(timeout)) seconds and was stopped")
+            }
             throw CAError.onePassword(cleanError(String(decoding: errBox.data, as: UTF8.self),
                                                  status: process.terminationStatus))
         }
-        return output
+        return outBox.data
     }
 
     static func cleanError(_ stderr: String, status: Int32) -> String {

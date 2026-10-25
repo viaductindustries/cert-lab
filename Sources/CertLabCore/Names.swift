@@ -11,22 +11,33 @@ public enum Names {
             .filter { !$0.isEmpty }
     }
 
+    /// Normalises one SAN entry: canonical IP text, or a lower-cased hostname.
+    public static func normalize(_ raw: String) throws -> (value: String, isIP: Bool) {
+        let entry = raw.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if let bytes = ipBytes(entry) { return (ipString(bytes), true) }
+        let name = raw.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard isValidHostname(name) else { throw CAError.invalidRequest("“\(raw)” is not a valid hostname or IP address.") }
+        return (name, false)
+    }
+
     /// Splits SAN input into DNS names and IP addresses, validating each.
     public static func classify(_ entries: [String]) throws -> (dns: [String], ips: [String]) {
         var dns: [String] = []
         var ips: [String] = []
         for raw in entries {
-            let entry = raw.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            if let bytes = ipBytes(entry) {
-                let canonical = ipString(bytes)
-                if !ips.contains(canonical) { ips.append(canonical) }
-            } else {
-                let name = raw.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                guard isValidHostname(name) else { throw CAError.invalidRequest("“\(raw)” is not a valid hostname or IP address.") }
-                if !dns.contains(name) { dns.append(name) }
+            let (value, isIP) = try normalize(raw)
+            if isIP {
+                if !ips.contains(value) { ips.append(value) }
+            } else if !dns.contains(value) {
+                dns.append(value)
             }
         }
         return (dns, ips)
+    }
+
+    /// The common name for a certificate: the first entry, whether it's a hostname or an IP.
+    public static func commonName(for entries: [String]) -> String? {
+        entries.first.flatMap { try? normalize($0).value }
     }
 
     public static func isValidHostname(_ name: String) -> Bool {
@@ -68,8 +79,8 @@ public enum Names {
 
     /// "10.0.0.0/8" → address bytes followed by mask bytes, as used in name constraints.
     public static func cidrBytes(_ cidr: String) throws -> [UInt8] {
-        let parts = cidr.split(separator: "/", maxSplits: 1).map(String.init)
-        guard let address = ipBytes(parts[0]) else {
+        let parts = cidr.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard (1...2).contains(parts.count), let address = ipBytes(parts[0]) else {
             throw CAError.invalidRequest("“\(cidr)” is not a valid IP range (e.g. 192.168.0.0/16).")
         }
         let bits = address.count * 8
@@ -96,12 +107,26 @@ public enum Names {
 
     // MARK: Name constraints
 
+    /// Whether every name `name` stands for falls inside the constraint. A wildcard
+    /// "*.D" is treated as a name whose first label is "*", so it's within a subtree
+    /// exactly when all of the names it matches are.
     static func dnsName(_ name: String, isWithin constraint: String) -> Bool {
         let constraint = constraint.lowercased()
-        let name = name.hasPrefix("*.") ? String(name.dropFirst(2)) : name
         if constraint.isEmpty { return true }
         if constraint.hasPrefix(".") { return name.hasSuffix(constraint) }
         return name == constraint || name.hasSuffix("." + constraint)
+    }
+
+    /// Whether *any* name `name` stands for falls inside the constraint, which is what
+    /// matters for excluded subtrees: "*.home.arpa" overlaps an exclusion of "admin.home.arpa".
+    static func dnsName(_ name: String, overlaps constraint: String) -> Bool {
+        if dnsName(name, isWithin: constraint) { return true }
+        let constraint = constraint.lowercased()
+        guard name.hasPrefix("*."), !constraint.hasPrefix(".") else { return false }
+        let base = name.dropFirst(2)
+        guard constraint.hasSuffix("." + base) else { return false }
+        let label = constraint.dropLast(base.count + 1)
+        return !label.isEmpty && !label.contains(".")
     }
 
     static func ip(_ address: [UInt8], isWithin range: some Collection<UInt8>) -> Bool {
@@ -121,7 +146,7 @@ public enum Names {
             if !permittedDNS.isEmpty, !permittedDNS.contains(where: { dnsName(name, isWithin: $0) }) {
                 throw CAError.nameConstraintViolation("\(name) is outside \(permittedDNS.joined(separator: ", "))")
             }
-            if let excluded = excludedDNS.first(where: { dnsName(name, isWithin: $0) }) {
+            if let excluded = excludedDNS.first(where: { dnsName(name, overlaps: $0) }) {
                 throw CAError.nameConstraintViolation("\(name) is excluded by \(excluded)")
             }
         }

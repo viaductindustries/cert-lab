@@ -53,9 +53,19 @@ public struct LocalStore: Sendable {
     public func loadLog() throws -> [IssuedRecord] { try load(logURL) ?? [] }
     public func saveLog(_ records: [IssuedRecord]) throws { try save(records, to: logURL) }
 
+    /// Loads a JSON file. A file that exists but can't be decoded is moved aside (never
+    /// overwritten) and reported, so its contents can be recovered by hand.
     private func load<T: Decodable>(_ url: URL) throws -> T? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try JSONCoding.decoder().decode(T.self, from: Data(contentsOf: url))
+        do {
+            return try JSONCoding.decoder().decode(T.self, from: Data(contentsOf: url))
+        } catch {
+            let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)
+                .dateTimeSeparator(.standard)).replacingOccurrences(of: ":", with: "")
+            let aside = url.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
+            try? FileManager.default.moveItem(at: url, to: aside)
+            throw LocalStoreError.unreadable(file: url.lastPathComponent, movedTo: aside, underlying: error.localizedDescription)
+        }
     }
 
     private func save<T: Encodable>(_ value: T, to url: URL) throws {
@@ -88,5 +98,16 @@ enum JSONCoding {
             return date
         }
         return decoder
+    }
+}
+
+public enum LocalStoreError: LocalizedError {
+    case unreadable(file: String, movedTo: URL, underlying: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unreadable(let file, let movedTo, let underlying):
+            "\(file) couldn’t be read (\(underlying)). It was moved to \(movedTo.path) so nothing is lost; Cert Lab is starting with an empty copy."
+        }
     }
 }

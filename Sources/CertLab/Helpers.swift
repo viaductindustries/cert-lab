@@ -3,22 +3,38 @@ import CertLabCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 enum Clipboard {
+    /// The pasteboard change count when we last put a secret on it.
+    private static var secretChangeCount: Int?
+
     /// Copies text. Secrets are marked concealed (so clipboard managers skip them)
-    /// and cleared after 90 seconds if still on the clipboard.
-    @MainActor static func copy(_ string: String, secret: Bool = false) {
+    /// and cleared after 90 seconds, or when the app quits, if still on the clipboard.
+    static func copy(_ string: String, secret: Bool = false) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if secret {
             pasteboard.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
         }
         pasteboard.setString(string, forType: .string)
-        guard secret else { return }
+        guard secret else {
+            secretChangeCount = nil
+            return
+        }
         let changeCount = pasteboard.changeCount
+        secretChangeCount = changeCount
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(90))
-            if NSPasteboard.general.changeCount == changeCount { NSPasteboard.general.clearContents() }
+            clearSecretIfPresent(changeCount: changeCount)
         }
+    }
+
+    /// Clears the clipboard if it still holds a secret we put there.
+    static func clearSecretIfPresent(changeCount: Int? = nil) {
+        guard let expected = changeCount ?? secretChangeCount,
+              NSPasteboard.general.changeCount == expected else { return }
+        NSPasteboard.general.clearContents()
+        secretChangeCount = nil
     }
 }
 
@@ -41,6 +57,7 @@ enum FileExport {
         guard panel.runModal() == .OK, let folder = panel.url else { return nil }
 
         let urls = files.map { folder.appendingPathComponent($0.name) }
+        precondition(Set(urls).count == urls.count, "export file names must be unique")
         let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
         if !existing.isEmpty {
             let alert = NSAlert()
@@ -51,9 +68,10 @@ enum FileExport {
             guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         }
         for (file, url) in zip(files, urls) {
-            try Data(file.contents.utf8).write(to: url, options: .atomic)
             if file.isSecret {
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                try PrivateFile.write(Data(file.contents.utf8), to: url)
+            } else {
+                try Data(file.contents.utf8).write(to: url, options: .atomic)
             }
         }
         NSWorkspace.shared.activateFileViewerSelecting(urls)
@@ -87,14 +105,21 @@ enum FileExport {
 /// Read-only, selectable monospaced text for PEM blobs.
 struct PEMTextView: View {
     var text: String
+    /// Off for private keys, so they can only leave via the secret-aware Copy button.
+    var selectable = true
 
     var body: some View {
         ScrollView {
-            Text(text)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
+            Group {
+                if selectable {
+                    Text(text).textSelection(.enabled)
+                } else {
+                    Text(text).textSelection(.disabled)
+                }
+            }
+            .font(.system(.caption, design: .monospaced))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
         }
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))

@@ -84,6 +84,8 @@ public struct IssuedBundle: Sendable {
 
 public enum CertificateAuthority {
     public static let minimumPassphraseLength = 12
+    /// Certificates start this long before "now" to tolerate clock skew.
+    public static let backdate: TimeInterval = 300
     /// Apple platforms reject TLS server certificates valid for longer than this.
     public static let appleMaximumValidityDays = 825
 
@@ -150,9 +152,9 @@ public enum CertificateAuthority {
 
         let certificate = try Certificate(
             version: .v3,
-            serialNumber: Certificate.SerialNumber(),
+            serialNumber: randomSerial(),
             publicKey: key.publicKey,
-            notValidBefore: now.addingTimeInterval(-300),
+            notValidBefore: now.addingTimeInterval(-backdate),
             notValidAfter: notAfter,
             issuer: subject,
             subject: subject,
@@ -177,6 +179,7 @@ public enum CertificateAuthority {
             throw CAError.invalidCertificate("the certificate's key usage does not allow certificate signing.")
         }
         guard key.publicKey == ca.publicKey else { throw CAError.keyDoesNotMatchCertificate }
+        try validateChain(chain)
         return CAMaterial(certificatePEM: chain.map { (try? $0.serializeAsPEM().pemString) ?? "" }.joined(),
                           keyPEM: try key.storagePEM(passphrase: newPassphrase))
     }
@@ -190,14 +193,21 @@ public enum CertificateAuthority {
         let caKey = try SigningKey(pem: material.keyPEM, passphrase: passphrase)
         guard caKey.publicKey == ca.publicKey else { throw CAError.keyDoesNotMatchCertificate }
 
-        let (dns, ips) = try validate(names: request.names, ca: ca)
+        try validateChain(chain)
+        let (dns, ips) = try validate(names: request.names, chain: chain)
+        // The leaf can't be valid outside any certificate in its chain.
+        let chainNotBefore = chain.map(\.notValidBefore).max()!
+        let chainNotAfter = chain.map(\.notValidAfter).min()!
         guard request.notAfter > now else { throw CAError.invalidRequest("Expiry must be in the future.") }
-        guard ca.notValidAfter > now else { throw CAError.invalidRequest("The CA certificate has expired.") }
-        guard request.notAfter <= ca.notValidAfter else {
-            throw CAError.invalidRequest("Expiry can’t be later than the CA’s own expiry (\(ca.notValidAfter.formatted(date: .abbreviated, time: .omitted))).")
+        guard chainNotAfter > now else { throw CAError.invalidRequest("The CA certificate has expired.") }
+        guard chainNotBefore <= now else {
+            throw CAError.invalidRequest("The CA certificate isn’t valid until \(chainNotBefore.formatted(date: .abbreviated, time: .shortened)).")
+        }
+        guard request.notAfter <= chainNotAfter else {
+            throw CAError.invalidRequest("Expiry can’t be later than the CA’s own expiry (\(chainNotAfter.formatted(date: .abbreviated, time: .omitted))).")
         }
         let leafKey = try SigningKey.generate(request.keyAlgorithm)
-        let commonName = dns.first ?? ips[0]
+        let commonName = Names.commonName(for: request.names) ?? dns.first ?? ips[0]
         let generalNames = dns.map { GeneralName.dnsName($0) }
             + ips.map { GeneralName.ipAddress(ASN1OctetString(contentBytes: ArraySlice(Names.ipBytes($0)!))) }
         let authorityKeyID = try ca.extensions.subjectKeyIdentifier?.keyIdentifier
@@ -213,8 +223,9 @@ public enum CertificateAuthority {
             SubjectAlternativeNames(generalNames)
         }
 
-        let notBefore = max(now.addingTimeInterval(-300), ca.notValidBefore)
-        let serial = Certificate.SerialNumber()
+        let notBefore = max(now.addingTimeInterval(-backdate), chainNotBefore)
+        guard notBefore < request.notAfter else { throw CAError.invalidRequest("Expiry must be after the start date.") }
+        let serial = randomSerial()
         let certificate = try Certificate(
             version: .v3,
             serialNumber: serial,
@@ -253,18 +264,43 @@ public enum CertificateAuthority {
         )
     }
 
-    /// Classifies SAN input and checks it against the CA's name constraints.
+    /// Classifies SAN input and checks it against the name constraints of every
+    /// certificate in the CA's chain.
     public static func validate(names: [String], certificatePEM: String) throws -> (dns: [String], ips: [String]) {
-        try validate(names: names, ca: certificates(fromPEM: certificatePEM)[0])
+        try validate(names: names, chain: certificates(fromPEM: certificatePEM))
     }
 
-    static func validate(names: [String], ca: Certificate) throws -> (dns: [String], ips: [String]) {
+    static func validate(names: [String], chain: [Certificate]) throws -> (dns: [String], ips: [String]) {
         let (dns, ips) = try Names.classify(names)
         guard !dns.isEmpty || !ips.isEmpty else { throw CAError.invalidRequest("Add at least one hostname or IP address.") }
-        if let constraints = try ca.extensions.nameConstraints {
-            try Names.check(dns: dns, ips: ips, against: constraints)
+        for certificate in chain {
+            if let constraints = try certificate.extensions.nameConstraints {
+                try Names.check(dns: dns, ips: ips, against: constraints)
+            }
         }
         return (dns, ips)
+    }
+
+    /// Each certificate after the first must be a CA that issued (and signed) the one before it.
+    static func validateChain(_ chain: [Certificate]) throws {
+        for (child, parent) in zip(chain, chain.dropFirst()) {
+            guard child.issuer == parent.subject,
+                  parent.publicKey.isValidSignature(child.signature, for: child) else {
+                throw CAError.invalidCertificate("the chain is out of order: “\(parent.subject)” didn’t sign “\(child.subject)”. List the CA certificate first, then each issuer in turn.")
+            }
+            guard case .isCertificateAuthority = try parent.extensions.basicConstraints else {
+                throw CAError.invalidCertificate("“\(parent.subject)” in the chain is not a CA.")
+            }
+        }
+    }
+
+    /// A positive serial of at most 20 DER octets (RFC 5280 §4.1.2.2): 20 random bytes
+    /// with the top bit cleared (no sign octet needed) and the next bit set (no leading zero).
+    static func randomSerial() -> Certificate.SerialNumber {
+        var generator = SystemRandomNumberGenerator()
+        var bytes = (0..<20).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        bytes[0] = (bytes[0] & 0x7F) | 0x40
+        return Certificate.SerialNumber(bytes: bytes)
     }
 
     // MARK: Inspection
