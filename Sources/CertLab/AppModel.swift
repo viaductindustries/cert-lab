@@ -166,6 +166,12 @@ final class AppModel {
         }
     }
 
+    /// Asks where to save the CA certificate (for installing on devices that should trust it).
+    func exportCACertificate(_ ca: CARecord) {
+        let name = FileExport.baseName(for: info(ca)?.commonName ?? ca.name) + ".crt"
+        do { try FileExport.save(ca.certificatePEM, suggestedName: name) } catch { alert = error.localizedDescription }
+    }
+
     func unsyncedCount(for ca: CARecord) -> Int {
         entries(for: ca).filter { $0.opItemID == nil }.count
     }

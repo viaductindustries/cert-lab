@@ -69,19 +69,25 @@ private struct SidebarRow: View {
 
     var body: some View {
         let status = model.info(ca).map { ExpiryStatus(notAfter: $0.notAfter) } ?? .valid
-        HStack(spacing: 8) {
-            Image(systemName: status == .valid ? "checkmark.seal" : "exclamationmark.triangle")
-                .symbolVariant(.fill)
-                .foregroundStyle(status == .valid ? AnyShapeStyle(.tint) : AnyShapeStyle(status.color))
-                .imageScale(.large)
-                .help(status == .valid ? "" : "CA certificate: \(status.label.lowercased())")
-            VStack(alignment: .leading, spacing: 1) {
-                Text(ca.name).lineLimit(1)
-                Text(model.entries(for: ca).count.counted("certificate"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 4) {
+            // A plain sidebar Label: macOS tints the icon with the accent colour and
+            // switches it to white when the row is selected.
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(ca.name).lineLimit(1)
+                    Text(model.entries(for: ca).count.counted("certificate"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "checkmark.seal.fill")
             }
             Spacer(minLength: 0)
+            if status != .valid {
+                Image(systemName: status.systemImage)
+                    .foregroundStyle(status.color)
+                    .help("CA certificate: \(status.label.lowercased())")
+            }
             if model.syncing.contains(ca.id) {
                 ProgressView().controlSize(.mini)
             } else if model.unsyncedCount(for: ca) > 0 {

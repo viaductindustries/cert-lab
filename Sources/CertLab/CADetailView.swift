@@ -28,22 +28,19 @@ struct CADetailView: View {
             }
             Divider()
             if allEntries.isEmpty {
-                ContentUnavailableView {
-                    Label("No Certificates Yet", systemImage: "doc.badge.plus")
-                } description: {
-                    Text("Certificates issued by \(ca.name) will appear here.")
-                } actions: {
-                    Button("Issue Certificate…") { model.sheet = .issue(ca, prefill: nil) }
-                        .buttonStyle(.borderedProminent)
-                }
+                GettingStartedView(ca: ca)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 filterBar
                 table
+                    .searchable(text: $search, placement: .toolbar, prompt: "Search certificates")
             }
-            statusBar
+            if !allEntries.isEmpty || model.syncing.contains(ca.id) || model.syncStatus[ca.id] != nil {
+                statusBar
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(ca.name)
-        .searchable(text: $search, placement: .toolbar, prompt: "Search certificates")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -206,10 +203,7 @@ private struct CAHeader: View {
             Spacer(minLength: 12)
             Menu {
                 Button("Copy CA Certificate", systemImage: "doc.on.doc") { Clipboard.copy(ca.certificatePEM) }
-                Button("Export CA Certificate…", systemImage: "square.and.arrow.up") {
-                    do { try FileExport.save(ca.certificatePEM, suggestedName: FileExport.baseName(for: info.commonName) + ".crt") }
-                    catch { model.alert = error.localizedDescription }
-                }
+                Button("Export CA Certificate…", systemImage: "square.and.arrow.up") { model.exportCACertificate(ca) }
                 Button("Copy SHA-256 Fingerprint", systemImage: "number") { Clipboard.copy(info.fingerprint) }
                 Divider()
                 Button("Remove from Cert Lab…", systemImage: "minus.circle", role: .destructive) { model.pendingRemoval = ca }
@@ -221,6 +215,77 @@ private struct CAHeader: View {
             .help("SHA-256 \(info.fingerprint)")
         }
         .padding(20)
+    }
+}
+
+/// Shown in place of the log until a CA has issued its first certificate.
+private struct GettingStartedView: View {
+    @Environment(AppModel.self) private var model
+    var ca: CARecord
+
+    var body: some View {
+        // Scrolls rather than forcing a minimum window height; centred when there's room.
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 6) {
+                Text("No certificates yet").font(.title2.weight(.semibold))
+                Text("Two steps to your first trusted certificate.")
+                    .foregroundStyle(.secondary)
+            }
+            VStack(spacing: 10) {
+                StepRow(number: 1, title: "Trust this CA on your devices",
+                        detail: "Install the CA certificate on each computer, phone or browser that should trust your certificates. You only need to do this once per device.",
+                        actionTitle: "Export CA Certificate…", prominent: false) {
+                    model.exportCACertificate(ca)
+                }
+                StepRow(number: 2, title: "Issue a certificate",
+                        detail: "Enter the hostnames and IP addresses of a server, such as your NAS or router, and install the key and certificate on it.",
+                        actionTitle: "Issue Certificate…", prominent: true) {
+                    model.sheet = .issue(ca, prefill: nil)
+                }
+            }
+            .frame(width: 520)
+        }
+        .padding(32)
+    }
+}
+
+private struct StepRow: View {
+    var number: Int
+    var title: String
+    var detail: String
+    var actionTitle: String
+    var prominent: Bool
+    var action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text("\(number)")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.gradient, in: Circle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+                if prominent {
+                    Button(actionTitle, action: action).buttonStyle(.borderedProminent)
+                } else {
+                    Button(actionTitle, action: action)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
