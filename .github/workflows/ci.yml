@@ -33,10 +33,4 @@ jobs:
         run: swift test
 
       - name: Build app
-        run: scripts/build-app.sh --zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cert-lab-${{ github.sha }}
-          path: build/*.zip
-          retention-days: 14
+        run: scripts/build-app.sh

@@ -4,13 +4,13 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
 
 ## Ground rules
 
-- **Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/).** release-please reads them to choose the next version and write the changelog, so a wrongly typed commit means a wrong release.
-  - `feat:` user-visible feature (minor bump), `fix:` bug fix (patch bump), `perf:` performance.
-  - `refactor:`, `docs:`, `test:`, `ci:`, `build:`, `chore:` don't trigger a release on their own.
-  - Breaking changes: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer (major bump).
+- **Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/).**
+  - `feat:` user-visible feature, `fix:` bug fix, `perf:` performance.
+  - `refactor:`, `docs:`, `test:`, `ci:`, `build:`, `chore:` for everything else.
+  - Breaking changes: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer.
   - Use a scope when it helps, e.g. `fix(sync): …`, `feat(ui): …`. Write the subject in the imperative mood, lower case, with no trailing full stop.
-- **Never edit `CHANGELOG.md`, `version.txt` or `.release-please-manifest.json` by hand.** release-please owns them. Releases happen by merging the release PR it opens.
-- **Don't push, tag, create releases or change GitHub settings unless asked.** The remote is `viaductindustries/cert-lab` (public).
+- **There are no releases for now.** People install by building from source (see README). Don't add release tooling, signing or notarization unless asked. `version.txt` is the app version, edited by hand.
+- **Don't push, tag or change GitHub settings unless asked.** The remote is `viaductindustries/cert-lab` (public).
 - Run `swift test` before committing. Tests must never touch a real 1Password account.
 
 ## Project layout
@@ -19,9 +19,9 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `Sources/CertLabCore`: all crypto, 1Password and storage logic, with no UI. Anything testable goes here.
   - `Sources/CertLab`: the SwiftUI app. `AppModel` is the single `@Observable` store, and the views are thin.
   - `Tests/CertLabCoreTests`: Swift Testing (`@Test`), not XCTest.
-- `scripts/build-app.sh [--notarize] [--zip] [--install]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
+- `scripts/build-app.sh [--install]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
 - `scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
-- CI is `.github/workflows/ci.yml` (tests and app build on every push and PR). `release.yml` runs release-please, then builds the zip and attaches it to the GitHub release.
+- CI is `.github/workflows/ci.yml`: tests and an app build on every push and PR.
 
 ## Product decisions
 
@@ -76,6 +76,6 @@ Existing users' data depends on these names, so don't rename them without a migr
 
 ## Distribution
 
-- `scripts/build-app.sh` is ad-hoc signed by default. With `CODESIGN_IDENTITY` set, it signs with Developer ID ("Viaduct Industries Limited", team `CP6L5J2ZTS`), using the hardened runtime and a secure timestamp. `--notarize` then submits the app with `notarytool`, staples the ticket and checks it with `spctl`.
-- The Release workflow notarizes only when the signing secrets exist; otherwise it falls back to an ad-hoc build with a warning. Secrets and local use are described in `docs/releasing.md`. Never print, log or commit certificates, `.p12`/`.p8` files or their passwords.
-- The app isn't sandboxed and has no entitlements: it only needs to run `op`, which the hardened runtime allows. If a future change needs an entitlement, add an entitlements file and pass it to `codesign`.
+- There are no binary releases. Users clone the repo and run `scripts/build-app.sh --install`, which builds an ad-hoc-signed app for their own Mac. That's why there's no quarantine prompt and no notarization.
+- The app isn't sandboxed and has no entitlements; it only needs to run `op`.
+- Binary releases were tried and removed. Doing them properly needs Developer ID signing with the hardened runtime and notarization (the Viaduct Industries Developer ID is available on the maintainer's Mac). Discuss with the maintainer before reintroducing them.

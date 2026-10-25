@@ -24,9 +24,33 @@ Cert Lab is a small macOS app for running your own private CA. You create (or im
 
 ## Installing
 
-Download `Cert-Lab-<version>.zip` from the [latest release](https://github.com/viaductindustries/cert-lab/releases/latest), unzip it and move **Cert Lab** to Applications.
+There are no pre-built releases yet, so you build Cert Lab yourself. It takes a couple of minutes.
 
-Release builds are signed with Developer ID and notarized by Apple, so they open normally. If a release was built before signing was set up, macOS will block it the first time: right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/Cert Lab.app"`.
+You'll need:
+
+- **Xcode 16 or later** (from the App Store), or a Swift 6 toolchain. Check with `swift --version`. If you've just installed Xcode, open it once to finish setup, or run `sudo xcode-select -s /Applications/Xcode.app`.
+- **The 1Password app and CLI**, as described under [Requirements](#requirements).
+
+Then:
+
+```sh
+git clone https://github.com/viaductindustries/cert-lab.git
+cd cert-lab
+scripts/build-app.sh --install
+```
+
+This compiles a release build, wraps it in `Cert Lab.app`, signs it ad hoc for this Mac and copies it to `/Applications`. Apps you build yourself aren't quarantined, so Cert Lab opens normally.
+
+The first time Cert Lab uses 1Password, 1Password asks you to approve access. If Cert Lab can't find `op`, set its path in **Cert Lab › Settings**, and use **Test Connection** there to check everything works.
+
+To update later:
+
+```sh
+git pull
+scripts/build-app.sh --install
+```
+
+Your CAs and history aren't affected by reinstalling. They live in 1Password and `~/Library/Application Support/Cert Lab/`.
 
 ## Using Cert Lab
 
@@ -46,25 +70,14 @@ Anyone with access to a CA's vault can issue certificates from it. If you turn o
 
 Issued certificates include their SANs and `serverAuth` (plus `clientAuth` if you choose it). Cert Lab warns about lifetimes over 825 days, because Apple devices reject longer-lived TLS certificates. CAs are created with `pathLen 0`, so they can sign certificates but not other CAs.
 
-## Building from source
+## Development
 
 ```sh
-swift test                         # tests (uses openssl for interoperability checks)
-scripts/build-app.sh               # → build/Cert Lab.app
-scripts/build-app.sh --install     # also copies it to /Applications
-scripts/build-app.sh --zip         # also writes build/Cert-Lab-<version>.zip
+swift test                       # tests (uses openssl for interoperability checks)
+scripts/build-app.sh             # → build/Cert Lab.app
+scripts/build-app.sh --install   # build and copy to /Applications
 ```
 
-Local builds are ad-hoc signed. See [docs/releasing.md](docs/releasing.md) for Developer ID signing and notarization.
+This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app. CI runs the tests and builds the app on every push and pull request.
 
-This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app.
-
-## Contributing and releases
-
-Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, etc.). [release-please](https://github.com/googleapis/release-please) uses them to manage versions:
-
-- Each push to `main` updates a release PR that bumps `version.txt` and `CHANGELOG.md`.
-- Merging that PR tags the release and publishes it on GitHub. CI then attaches the signed, notarized app ([details](docs/releasing.md)).
-- CI runs the tests and builds the app on every push and pull request.
-
-[AGENTS.md](AGENTS.md) records the project's design decisions and conventions, for both people and coding agents.
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, etc.). [AGENTS.md](AGENTS.md) records the project's design decisions and conventions, for both people and coding agents.
