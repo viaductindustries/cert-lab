@@ -19,7 +19,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `Sources/CertLabCore`: all crypto, 1Password and storage logic, with no UI. Anything testable goes here.
   - `Sources/CertLab`: the SwiftUI app. `AppModel` is the single `@Observable` store, and the views are thin.
   - `Tests/CertLabCoreTests`: Swift Testing (`@Test`), not XCTest.
-- `scripts/build-app.sh [--install] [--zip]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
+- `scripts/build-app.sh [--notarize] [--zip] [--install]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
 - `scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
 - CI is `.github/workflows/ci.yml` (tests and app build on every push and PR). `release.yml` runs release-please, then builds the zip and attaches it to the GitHub release.
 
@@ -76,4 +76,6 @@ Existing users' data depends on these names, so don't rename them without a migr
 
 ## Distribution
 
-- Builds are ad-hoc signed and not notarized. Users have to right-click → Open the first time, or clear the quarantine attribute. Developer ID signing and notarization would need Apple credentials as repository secrets, which aren't set up yet.
+- `scripts/build-app.sh` is ad-hoc signed by default. With `CODESIGN_IDENTITY` set, it signs with Developer ID ("Viaduct Industries Limited", team `CP6L5J2ZTS`), using the hardened runtime and a secure timestamp. `--notarize` then submits the app with `notarytool`, staples the ticket and checks it with `spctl`.
+- The Release workflow notarizes only when the signing secrets exist; otherwise it falls back to an ad-hoc build with a warning. Secrets and local use are described in `docs/releasing.md`. Never print, log or commit certificates, `.p12`/`.p8` files or their passwords.
+- The app isn't sandboxed and has no entitlements: it only needs to run `op`, which the hardened runtime allows. If a future change needs an entitlement, add an entitlements file and pass it to `codesign`.

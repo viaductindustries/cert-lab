@@ -26,11 +26,7 @@ Cert Lab is a small macOS app for running your own private CA. You create (or im
 
 Download `Cert-Lab-<version>.zip` from the [latest release](https://github.com/viaductindustries/cert-lab/releases/latest), unzip it and move **Cert Lab** to Applications.
 
-Builds aren't notarized yet, so the first time you open the app, right-click it and choose **Open**. Alternatively, run:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/Cert Lab.app"
-```
+Release builds are signed with Developer ID and notarized by Apple, so they open normally. If a release was built before signing was set up, macOS will block it the first time: right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/Cert Lab.app"`.
 
 ## Using Cert Lab
 
@@ -59,6 +55,8 @@ scripts/build-app.sh --install     # also copies it to /Applications
 scripts/build-app.sh --zip         # also writes build/Cert-Lab-<version>.zip
 ```
 
+Local builds are ad-hoc signed. See [docs/releasing.md](docs/releasing.md) for Developer ID signing and notarization.
+
 This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app.
 
 ## Contributing and releases
@@ -66,7 +64,7 @@ This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` c
 Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, etc.). [release-please](https://github.com/googleapis/release-please) uses them to manage versions:
 
 - Each push to `main` updates a release PR that bumps `version.txt` and `CHANGELOG.md`.
-- Merging that PR tags the release and publishes it on GitHub, and CI attaches the built app.
+- Merging that PR tags the release and publishes it on GitHub. CI then attaches the signed, notarized app ([details](docs/releasing.md)).
 - CI runs the tests and builds the app on every push and pull request.
 
 [AGENTS.md](AGENTS.md) records the project's design decisions and conventions, for both people and coding agents.
