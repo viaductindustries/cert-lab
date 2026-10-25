@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & build
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # build number comes from the commit count
+
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Toolchain
+        run: |
+          swift --version
+          openssl version || true
+
+      - name: Test
+        run: swift test
+
+      - name: Build app
+        run: scripts/build-app.sh --zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cert-lab-${{ github.sha }}
+          path: build/*.zip
+          retention-days: 14
