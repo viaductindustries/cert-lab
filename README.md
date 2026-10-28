@@ -24,7 +24,22 @@ Cert Lab is a small macOS app for running your own private CA. You create (or im
 
 ## Installing
 
-Download the ZIP from [GitHub Releases](https://github.com/viaductindustries/cert-lab/releases), unzip it, and move **Cert Lab.app** to `/Applications`. Release downloads are signed with Developer ID and notarized by Apple, and support both Apple Silicon and Intel Macs. If no release has been published yet, build from source below.
+Install through the [Viaduct Industries Homebrew tap](https://github.com/viaductindustries/homebrew-tap):
+
+```sh
+brew install --cask viaductindustries/tap/cert-lab
+```
+
+To update:
+
+```sh
+brew update
+brew upgrade --cask viaductindustries/tap/cert-lab
+```
+
+Alternatively, download the ZIP from [GitHub Releases](https://github.com/viaductindustries/cert-lab/releases), unzip it, and move **Cert Lab.app** to `/Applications`. Both installation methods use the same release, signed with Developer ID and notarized by Apple, with support for Apple Silicon and Intel Macs.
+
+The 1Password desktop app and CLI are required separately; see [Requirements](#requirements).
 
 ### Building from source
 
