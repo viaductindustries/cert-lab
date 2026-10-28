@@ -41,6 +41,9 @@ security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 security import "$CREDENTIAL_DIR/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
     -k "$KEYCHAIN" -T /usr/bin/codesign
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+# codesign also resolves identities through the user keychain search list.
+# This script runs on a disposable GitHub-hosted runner.
+security list-keychains -d user -s "$KEYCHAIN"
 
 # Select exactly one valid Developer ID Application identity from the uploaded P12.
 IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN" | sed -n '/"Developer ID Application:/s/.*) \([A-Fa-f0-9]\{40\}\) .*/\1/p')"
