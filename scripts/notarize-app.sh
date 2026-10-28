@@ -13,7 +13,13 @@ done
 APP="build/Cert Lab.app"
 VERSION="$(tr -d '[:space:]' < version.txt)"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version.txt must contain X.Y.Z" >&2; exit 1; }
-lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/CertLab"
+ARCHITECTURES="$(lipo -archs "$APP/Contents/MacOS/CertLab")"
+for architecture in arm64 x86_64; do
+    if [[ " $ARCHITECTURES " != *" $architecture "* ]]; then
+        echo "Release app is missing required architecture: $architecture" >&2
+        exit 1
+    fi
+done
 
 # Private material exists only in a temporary directory and a dedicated keychain.
 umask 077

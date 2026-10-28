@@ -47,6 +47,21 @@ No Apple ID password, app-specific password, or provisioning profile is needed. 
 
 The implementation follows [GitHub's certificate import guidance](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications) and [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow). Credentials are written with private permissions to temporary storage and removed on exit; use GitHub-hosted runners for this workflow.
 
+## Configure Homebrew publishing
+
+After the notarized downloads are uploaded, the release workflow calls the pinned reusable workflow in [viaductindustries/homebrew-tap](https://github.com/viaductindustries/homebrew-tap). It verifies the release asset, computes its SHA-256, and opens a PR updating the `cert-lab` cask (or creating it for the first release). A maintainer reviews the installation checks and merges the PR before users can get the update through Homebrew.
+
+Follow the tap's [publisher setup instructions](https://github.com/viaductindustries/homebrew-tap/blob/main/PUBLISHING.md#first-time-github-setup). The GitHub App needs **Contents** and **Pull requests** read/write permissions and should be installed only on `homebrew-tap`. Make these Actions settings available to **cert-lab**, either directly or through organization settings restricted to approved source repositories:
+
+| Setting | Type | Value |
+|---|---|---|
+| `HOMEBREW_APP_CLIENT_ID` | Variable | The publisher GitHub App's Client ID |
+| `HOMEBREW_APP_PRIVATE_KEY` | Secret | The complete GitHub App private key PEM, including header, footer and line breaks; not base64 |
+
+Release Please passes the private key through the reusable release workflow to the tap job. Apple credentials are not passed to the tap workflow. The tap generates a short-lived token scoped to its own repository; Cert Lab's automatic `GITHUB_TOKEN` cannot write to the other repository.
+
+If the tap job fails, fix its credentials or reported issue and choose **Re-run failed jobs** on the original run. Do not rerun successful signing and upload jobs: the published downloads are immutable. A failed tap update does not invalidate the published app release.
+
 ## Enable Release Please
 
 In [Settings → Actions → General](https://github.com/viaductindustries/cert-lab/settings/actions), enable **Allow GitHub Actions to create and approve pull requests**. Organization policy may require an owner to enable this. The Release Please job requests `contents`, `issues`, and `pull-requests` write permissions for managing releases and release PRs. No repository settings are changed by the workflow itself.
@@ -57,11 +72,12 @@ GitHub does not automatically run pull-request CI for PRs created or updated wit
 
 ## Make a release
 
-1. Add the three Apple secrets and two variables above, enable the workflow permissions, and merge these workflow changes into `main`.
+1. Add the three Apple secrets and two Apple variables above, configure the Homebrew publisher credentials, enable the workflow permissions, and merge these workflow changes into `main`.
 2. Merge changes using Conventional Commits. `fix:` and `perf:` produce patch releases, `feat:` produces minor releases, and breaking changes (`!` or a `BREAKING CHANGE:` footer) produce major releases. All supported Conventional Commit types can trigger a release: `docs:`, `test:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:` and `revert:` also produce patch releases. Continue using Conventional Commit messages; unstructured commit messages are not supported. Merging the generated release PR remains the step that publishes a release.
 3. Release Please opens or updates a release PR containing the proposed version and changelog. Review it and check CI. The initial release is configured as **1.0.0**; the empty initial manifest means no previous release is recorded.
 4. Merge the release PR when ready. Release Please creates the `vX.Y.Z` tag and publishes the release notes automatically, then starts the signed build. You do not need to edit `version.txt`, push tags, or create releases yourself.
 5. Follow the [Release Please workflow](https://github.com/viaductindustries/cert-lab/actions/workflows/release-please.yml). When its build and upload jobs succeed, the [GitHub Release](https://github.com/viaductindustries/cert-lab/releases) contains the notarized universal ZIP and checksums. Download the app and verify the interactive 1Password approval experience.
+6. Review the automatically opened PR in [homebrew-tap](https://github.com/viaductindustries/homebrew-tap/pulls). Merge it once the tap's validation and installation checks pass. Users can then run `brew update` and `brew upgrade --cask cert-lab`.
 
 `version.txt` remains the build input, but Release Please owns its updates. `.release-please-manifest.json` tracks the released version; `release-please-config.json` selects the `simple` strategy. Numeric `vX.Y.Z` releases are supported; prerelease suffixes are not currently supported by the app build.
 

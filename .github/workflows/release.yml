@@ -14,6 +14,8 @@ on:
         required: true
       APPLE_API_PRIVATE_KEY_BASE64:
         required: true
+      HOMEBREW_APP_PRIVATE_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -131,3 +133,16 @@ jobs:
               gh release upload "$TAG" "$file"
             fi
           done
+
+  update-homebrew:
+    name: Update Homebrew tap
+    needs: release
+    permissions:
+      contents: read
+    uses: viaductindustries/homebrew-tap/.github/workflows/update-package.yml@b71ffff060bdd3e1d6235c572177f7bb3846bd24
+    with:
+      package: cert-lab
+      tag: ${{ inputs.tag }}
+      app-client-id: ${{ vars.HOMEBREW_APP_CLIENT_ID }}
+    secrets:
+      HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
