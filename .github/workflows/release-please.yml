@@ -17,14 +17,14 @@ jobs:
       group: release-please-main
       cancel-in-progress: false
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: write # create tags and GitHub Releases
+      issues: write # manage release labels
+      pull-requests: write # open and update release PRs
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
@@ -36,8 +36,13 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     permissions:
-      contents: write
+      contents: write # attach downloads to the release
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
-    secrets: inherit
+    # Pass only what the release build needs; RELEASE_PLEASE_TOKEN stays here.
+    secrets:
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+      HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
