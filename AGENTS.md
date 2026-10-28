@@ -9,7 +9,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `refactor:`, `docs:`, `test:`, `ci:`, `build:`, `chore:` for everything else.
   - Breaking changes: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer.
   - Use a scope when it helps, e.g. `fix(sync): …`, `feat(ui): …`. Write the subject in the imperative mood, lower case, with no trailing full stop.
-- **Releases are signed and notarized on GitHub Actions.** Release Please manages version bumps and changelogs in release PRs. Merging a release PR creates the tag and GitHub Release, then calls the signed build workflow to attach downloads. See `docs/releases.md` for credentials and the release procedure. Release Please maintains `version.txt`; do not bump it manually.
+- **Releases are signed and notarized on GitHub Actions.** Release Please manages version bumps and changelogs in release PRs. Merging a release PR creates the tag and GitHub Release, then calls the signed build workflow to attach downloads. See `docs/releases.md` for credentials and the release procedure. Release Please maintains `version.txt`; do not bump it manually. All supported Conventional Commit types can trigger a release; maintenance/documentation changes produce patch releases.
 - **Don't push, tag or change GitHub settings unless asked.** The remote is `viaductindustries/cert-lab` (public).
 - Run `swift test` before committing. Tests must never touch a real 1Password account.
 
@@ -95,4 +95,4 @@ Existing users' data depends on these names, so don't rename them without a migr
 - Binary releases are universal ZIPs, signed with Developer ID and the hardened runtime, notarized with `notarytool`, and stapled before packaging. The workflow verifies Gatekeeper before attaching downloads to the release created by Release Please. Release notes are visible while binaries build.
 - Users can also run `scripts/build-app.sh --install` to build an ad-hoc-signed app locally.
 - The app isn't sandboxed and has no entitlements; it only needs to run `op`.
-- Signing and notarization credentials belong in GitHub repository secrets, never in the repository. The Viaduct Industries Developer ID is available on the maintainer's Mac; `docs/releases.md` explains export and setup. Published release assets must not be replaced.
+- Signing and notarization private keys and passwords belong in GitHub repository secrets, never in the repository. `APPLE_API_KEY_ID` and `APPLE_API_ISSUER_ID` are GitHub repository variables. The Viaduct Industries Developer ID is available on the maintainer's Mac; `docs/releases.md` explains export and setup. Published release assets must not be replaced.

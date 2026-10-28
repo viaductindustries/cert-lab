@@ -4,15 +4,18 @@ Release Please opens and updates a release PR from Conventional Commits on `main
 
 ## Upload the credentials
 
-Open [Cert Lab → Settings → Secrets and variables → Actions](https://github.com/viaductindustries/cert-lab/settings/secrets/actions) and choose **New repository secret** for each row below. These are secret values, not Actions variables. GitHub accepts text here; use the commands below to prepare the two files. Do not commit these files or paste their contents into issues or chat.
+Open [Cert Lab → Settings → Secrets and variables → Actions](https://github.com/viaductindustries/cert-lab/settings/secrets/actions) and add the three **repository secrets** below. Add the two identifiers under the **Variables** tab using **New repository variable**. GitHub accepts text here; use the commands below to prepare the two files. Do not commit these files or paste their contents into issues or chat.
 
 | Repository secret | Value to upload |
 |---|---|
 | `APPLE_CERTIFICATE_BASE64` | Base64 of a `.p12` containing exactly one valid **Developer ID Application** certificate and its private key |
 | `APPLE_CERTIFICATE_PASSWORD` | The password chosen when exporting that `.p12` |
+| `APPLE_API_PRIVATE_KEY_BASE64` | Base64 of the complete downloaded `.p8` file |
+
+| Repository variable | Value |
+|---|---|
 | `APPLE_API_KEY_ID` | The Key ID of the App Store Connect **team** API key |
 | `APPLE_API_ISSUER_ID` | The Issuer ID shown on the App Store Connect team API keys page (not the Apple Developer Team ID) |
-| `APPLE_API_PRIVATE_KEY_BASE64` | Base64 of the complete downloaded `.p8` file |
 
 ### Developer ID signing certificate
 
@@ -32,7 +35,7 @@ Save its export password separately as `APPLE_CERTIFICATE_PASSWORD`. The workflo
 
 In [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api), create a **Team API Key** with **Developer** access or higher. An account administrator may need to enable API access or create the key. Use the same Apple Developer organization as the signing identity. This workflow uses team keys with an issuer; individual keys are not supported.
 
-Record the **Key ID** and **Issuer ID**, then download the private key (`AuthKey_….p8`). Apple only allows the private key to be downloaded once, so retain a secure backup. Encode the complete file as a single line for `APPLE_API_PRIVATE_KEY_BASE64`:
+Save the **Key ID** and **Issuer ID** as the repository variables above, then download the private key (`AuthKey_….p8`). Apple only allows the private key to be downloaded once, so retain a secure backup. Encode the complete file as a single line for `APPLE_API_PRIVATE_KEY_BASE64`:
 
 ```sh
 base64 -i /path/to/AuthKey_YOURKEYID.p8 | tr -d '\r\n' | pbcopy
@@ -54,8 +57,8 @@ GitHub does not automatically run pull-request CI for PRs created or updated wit
 
 ## Make a release
 
-1. Add the Apple secrets above, enable the workflow permissions, and merge these workflow changes into `main`.
-2. Merge changes using Conventional Commits. `fix:` and `perf:` produce patch releases, `feat:` produces minor releases, and breaking changes (`!` or a `BREAKING CHANGE:` footer) produce major releases. Documentation and maintenance commits alone normally do not cause a release.
+1. Add the three Apple secrets and two variables above, enable the workflow permissions, and merge these workflow changes into `main`.
+2. Merge changes using Conventional Commits. `fix:` and `perf:` produce patch releases, `feat:` produces minor releases, and breaking changes (`!` or a `BREAKING CHANGE:` footer) produce major releases. All supported Conventional Commit types can trigger a release: `docs:`, `test:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:` and `revert:` also produce patch releases. Continue using Conventional Commit messages; unstructured commit messages are not supported. Merging the generated release PR remains the step that publishes a release.
 3. Release Please opens or updates a release PR containing the proposed version and changelog. Review it and check CI. The initial release is configured as **1.0.0**; the empty initial manifest means no previous release is recorded.
 4. Merge the release PR when ready. Release Please creates the `vX.Y.Z` tag and publishes the release notes automatically, then starts the signed build. You do not need to edit `version.txt`, push tags, or create releases yourself.
 5. Follow the [Release Please workflow](https://github.com/viaductindustries/cert-lab/actions/workflows/release-please.yml). When its build and upload jobs succeed, the [GitHub Release](https://github.com/viaductindustries/cert-lab/releases) contains the notarized universal ZIP and checksums. Download the app and verify the interactive 1Password approval experience.
@@ -76,7 +79,7 @@ Ordinary CI requires no Apple secrets and uploads an ad-hoc-signed universal dev
 
 - **Release PR cannot be created:** enable the Actions setting above and check organization policy. If using `RELEASE_PLEASE_TOKEN`, check its permissions and expiry.
 - **Release has no downloads yet:** check the Release Please run. Release notes are published before signing starts; if a later step fails, retry the failed build as described above.
-- **Missing required environment variable:** check the five repository secret names exactly. Secrets must be available in this repository, not only in an unrelated environment.
+- **Missing required environment variable:** check the three repository secrets and the two repository variables above. The key and issuer IDs are read from `vars`, not `secrets`. All five settings must be available in this repository, not only in an unrelated environment.
 - **No valid Developer ID Application identity:** re-export the certificate together with its private key. Check expiration and the `.p12` password. Only include one signing identity.
 - **Apple authentication failure:** check the team API key, issuer UUID, Key ID and base64 encoding of the complete `.p8` file. A revoked key must be replaced.
 - **Notarization rejected:** download the run's `notarization` artifact for Apple's `result.json` and `log.json`. Release assets are not uploaded when signing, notarization, stapling or Gatekeeper verification fails.
