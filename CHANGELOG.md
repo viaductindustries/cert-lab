@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/viaductindustries/cert-lab/compare/v1.0.2...v1.0.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* **release:** add signing keychain to the user search list ([6ace9e1](https://github.com/viaductindustries/cert-lab/commit/6ace9e1e04973eeb85e0dec2c2fba0e9ab7c6361))
+
 ## [1.0.2](https://github.com/viaductindustries/cert-lab/compare/v1.0.1...v1.0.2) (2026-10-28)
 
 
