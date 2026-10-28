@@ -24,7 +24,11 @@ Cert Lab is a small macOS app for running your own private CA. You create (or im
 
 ## Installing
 
-There are no pre-built releases yet, so you build Cert Lab yourself. It takes a couple of minutes.
+Download the ZIP from [GitHub Releases](https://github.com/viaductindustries/cert-lab/releases), unzip it, and move **Cert Lab.app** to `/Applications`. Release downloads are signed with Developer ID and notarized by Apple, and support both Apple Silicon and Intel Macs. If no release has been published yet, build from source below.
+
+### Building from source
+
+You can also build Cert Lab yourself. It takes a couple of minutes.
 
 You'll need:
 
@@ -78,6 +82,6 @@ scripts/build-app.sh             # → build/Cert Lab.app
 scripts/build-app.sh --install   # build and copy to /Applications
 ```
 
-This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app. CI runs the tests and builds the app on every push and pull request.
+This is a plain Swift package; there's no Xcode project. `Sources/CertLabCore` contains the crypto, 1Password and storage code, and `Sources/CertLab` is the SwiftUI app. CI runs the tests and builds a universal app on pushes to `main` and pull requests. Development builds are available as workflow artifacts. Release Please maintains version-bump PRs and changelogs; merging a release PR creates the GitHub Release and runs the signed and notarized build; see [Release setup and credentials](docs/releases.md) for the GitHub secret names, upload locations, and publishing steps.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, etc.). [AGENTS.md](AGENTS.md) records the project's design decisions and conventions, for both people and coding agents.

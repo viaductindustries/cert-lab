@@ -5,3 +5,8 @@ DerivedData/
 *.xcodeproj/
 .DS_Store
 Resources/AppIcon-preview.png
+
+# Distribution credentials must only be stored in GitHub secrets.
+*.p12
+*.p8
+*.keychain-db

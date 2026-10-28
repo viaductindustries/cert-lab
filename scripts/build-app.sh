@@ -1,15 +1,18 @@
 #!/bin/bash
 # Builds "Cert Lab.app" into ./build (ad-hoc signed).
-# Usage: scripts/build-app.sh [--install]
+# Usage: scripts/build-app.sh [--install] [--universal]
 #   --install  also copy the app to /Applications
-# The version comes from version.txt; the build number from $BUILD_NUMBER or the git commit count.
+#   --universal  build for both Apple Silicon and Intel
+# The version comes from version.txt (maintained by Release Please); the build number from $BUILD_NUMBER or the git commit count.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 INSTALL=false
+BUILD_ARGS=(-c release)
 for arg in "$@"; do
     case "$arg" in
         --install) INSTALL=true ;;
+        --universal) BUILD_ARGS+=(--arch arm64 --arch x86_64) ;;
         *) echo "Unknown option: $arg" >&2; exit 64 ;;
     esac
 done
@@ -17,8 +20,8 @@ done
 VERSION="$(tr -d '[:space:]' < version.txt)"
 BUILD="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/CertLab"
+swift build "${BUILD_ARGS[@]}"
+BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/CertLab"
 
 APP="build/Cert Lab.app"
 rm -rf "$APP"

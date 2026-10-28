@@ -9,7 +9,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `refactor:`, `docs:`, `test:`, `ci:`, `build:`, `chore:` for everything else.
   - Breaking changes: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer.
   - Use a scope when it helps, e.g. `fix(sync): …`, `feat(ui): …`. Write the subject in the imperative mood, lower case, with no trailing full stop.
-- **There are no releases for now.** People install by building from source (see README). Don't add release tooling, signing or notarization unless asked. `version.txt` is the app version, edited by hand.
+- **Releases are signed and notarized on GitHub Actions.** Release Please manages version bumps and changelogs in release PRs. Merging a release PR creates the tag and GitHub Release, then calls the signed build workflow to attach downloads. See `docs/releases.md` for credentials and the release procedure. Release Please maintains `version.txt`; do not bump it manually.
 - **Don't push, tag or change GitHub settings unless asked.** The remote is `viaductindustries/cert-lab` (public).
 - Run `swift test` before committing. Tests must never touch a real 1Password account.
 
@@ -19,9 +19,9 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `Sources/CertLabCore`: all crypto, 1Password and storage logic, with no UI. Anything testable goes here.
   - `Sources/CertLab`: the SwiftUI app. `AppModel` is the single `@Observable` store, and the views are thin.
   - `Tests/CertLabCoreTests`: Swift Testing (`@Test`), not XCTest.
-- `scripts/build-app.sh [--install]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
+- `scripts/build-app.sh [--install] [--universal]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
 - `scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
-- CI is `.github/workflows/ci.yml`: tests and an app build on every push and PR.
+- CI is `.github/workflows/ci.yml`: tests and a universal app build on pushes to `main` and PRs. `.github/workflows/release-please.yml` manages release PRs on `main` and calls `.github/workflows/release.yml` to test, sign, notarize, and upload downloads for new releases.
 
 ## Product decisions
 
@@ -92,6 +92,7 @@ Existing users' data depends on these names, so don't rename them without a migr
 
 ## Distribution
 
-- There are no binary releases. Users clone the repo and run `scripts/build-app.sh --install`, which builds an ad-hoc-signed app for their own Mac. That's why there's no quarantine prompt and no notarization.
+- Binary releases are universal ZIPs, signed with Developer ID and the hardened runtime, notarized with `notarytool`, and stapled before packaging. The workflow verifies Gatekeeper before attaching downloads to the release created by Release Please. Release notes are visible while binaries build.
+- Users can also run `scripts/build-app.sh --install` to build an ad-hoc-signed app locally.
 - The app isn't sandboxed and has no entitlements; it only needs to run `op`.
-- Binary releases were tried and removed. Doing them properly needs Developer ID signing with the hardened runtime and notarization (the Viaduct Industries Developer ID is available on the maintainer's Mac). Discuss with the maintainer before reintroducing them.
+- Signing and notarization credentials belong in GitHub repository secrets, never in the repository. The Viaduct Industries Developer ID is available on the maintainer's Mac; `docs/releases.md` explains export and setup. Published release assets must not be replaced.
