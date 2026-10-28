@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/viaductindustries/cert-lab/compare/v1.0.0...v1.0.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **release:** use Apple variables and release all commit types ([faa82ca](https://github.com/viaductindustries/cert-lab/commit/faa82ca5d870c63a4a9b5fc386bbe83db7d0167b))
+* **ui:** extend the sidebar divider through the title bar ([c2813ff](https://github.com/viaductindustries/cert-lab/commit/c2813ffde2f9382acb296889da7a300ba66aac0d))
+
 ## 1.0.0 (2026-10-28)
 
 
