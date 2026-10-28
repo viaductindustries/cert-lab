@@ -3,10 +3,11 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: $model.selection) {
                 Section("Certificate Authorities") {
                     ForEach(model.authorities) { ca in
@@ -24,6 +25,7 @@ struct ContentView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
+            .background(SidebarTitlebarDivider(isVisible: columnVisibility != .detailOnly))
             .toolbar {
                 ToolbarItem {
                     AddCAMenu()
