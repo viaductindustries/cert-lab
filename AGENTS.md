@@ -9,7 +9,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `refactor:`, `docs:`, `test:`, `ci:`, `build:`, `chore:` for everything else.
   - Breaking changes: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer.
   - Use a scope when it helps, e.g. `fix(sync): …`, `feat(ui): …`. Write the subject in the imperative mood, lower case, with no trailing full stop.
-- **Releases are signed and notarized on GitHub Actions.** Release Please manages version bumps and changelogs in release PRs. Merging a release PR creates the tag and GitHub Release, then calls the signed build workflow to attach downloads. See `docs/releases.md` for credentials and the release procedure. Release Please maintains `version.txt`; do not bump it manually. All supported Conventional Commit types can trigger a release; maintenance/documentation changes produce patch releases.
+- **Releases are signed and notarized on GitHub Actions.** Release Please manages version bumps and changelogs in release PRs. Merging a release PR creates the tag and GitHub Release, then the same workflow runs the signed build to attach downloads. See `docs/releases.md` for credentials and the release procedure. Release Please maintains `version.txt`; do not bump it manually. All supported Conventional Commit types can trigger a release; maintenance/documentation changes produce patch releases.
 - **Don't push, tag or change GitHub settings unless asked.** The remote is `viaductindustries/cert-lab` (public).
 - Run `swift test` before committing. Tests must never touch a real 1Password account.
 
@@ -21,7 +21,7 @@ Cert Lab is a small macOS app that runs private certificate authorities for home
   - `Tests/CertLabCoreTests`: Swift Testing (`@Test`), not XCTest.
 - `scripts/build-app.sh [--install] [--universal]` bundles `build/Cert Lab.app`. It takes the version from `version.txt` and the build number from `$BUILD_NUMBER` or the git commit count.
 - `scripts/make-icon.swift` regenerates `Resources/AppIcon.icns`.
-- CI is `.github/workflows/ci.yml`: tests and a universal app build on pushes to `main` and PRs. `.github/workflows/release-please.yml` manages release PRs on `main` and calls `.github/workflows/release.yml` to test, sign, notarize, and upload downloads for new releases.
+- CI is `.github/workflows/ci.yml`: tests and a universal app build on pushes to `main` and PRs. `.github/workflows/release.yml` runs Release Please on `main` and, in the same run, tests, signs, notarizes, and uploads downloads for new releases. Keep the signing job in that workflow rather than a reusable one: GitHub leaves environment secrets empty in called workflows unless the caller uses `secrets: inherit`.
   - Pin third-party actions to a full commit SHA with a `# vX.Y.Z` comment; Dependabot (`.github/dependabot.yml`) proposes updates after a 7-day cooldown. Check out with `persist-credentials: false`, give each job only the permissions it needs (with a comment saying why), and pass secrets to reusable workflows explicitly rather than with `secrets: inherit`. `zizmor .github` should report nothing above `help`.
 
 ## Product decisions

@@ -1,6 +1,6 @@
 # Releasing Cert Lab
 
-Release Please opens and updates a release PR from Conventional Commits on `main`. It maintains `version.txt`, `CHANGELOG.md`, and `.release-please-manifest.json`. Merging that PR creates the version tag and publishes the GitHub Release with generated notes. The same workflow then calls the release build to test, build a universal app, sign with Developer ID, notarize, staple, and check Gatekeeper before attaching the ZIP and `SHA256SUMS.txt`. The release page is visible while its downloads are still building.
+Release Please opens and updates a release PR from Conventional Commits on `main`. It maintains `version.txt`, `CHANGELOG.md`, and `.release-please-manifest.json`. Merging that PR creates the version tag and publishes the GitHub Release with generated notes. The same workflow run then tests, build a universal app, sign with Developer ID, notarize, staple, and check Gatekeeper before attaching the ZIP and `SHA256SUMS.txt`. The release page is visible while its downloads are still building.
 
 ## Create the release environment
 
@@ -67,7 +67,7 @@ Follow the tap's [publisher setup instructions](https://github.com/viaductindust
 | `HOMEBREW_APP_CLIENT_ID` | Variable | The publisher GitHub App's Client ID |
 | `HOMEBREW_APP_PRIVATE_KEY` | Secret | The complete GitHub App private key PEM, including header, footer and line breaks; not base64 |
 
-Release Please passes the private key through the reusable release workflow to the tap job. The tap workflow can't read environment secrets, so this key stays a repository (or organization) secret; at worst it can open PRs on the tap, which a maintainer reviews. Apple credentials are not passed to the tap workflow. The tap generates a short-lived token scoped to its own repository; Cert Lab's automatic `GITHUB_TOKEN` cannot write to the other repository.
+The release workflow passes the private key to the tap job. The tap workflow can't read environment secrets, so this key stays a repository (or organization) secret; at worst it can open PRs on the tap, which a maintainer reviews. Apple credentials are not passed to the tap workflow. The tap generates a short-lived token scoped to its own repository; Cert Lab's automatic `GITHUB_TOKEN` cannot write to the other repository.
 
 If the tap job fails, fix its credentials or reported issue and choose **Re-run failed jobs** on the original run. Do not rerun successful signing and upload jobs: the published downloads are immutable. A failed tap update does not invalidate the published app release.
 
@@ -87,7 +87,7 @@ Release Please acts as a GitHub App rather than with `GITHUB_TOKEN`, because Git
 
 For example, `gh secret set RELEASE_PLEASE_APP_PRIVATE_KEY --env release-please < ~/Downloads/viaduct-release-please.*.private-key.pem`.
 
-The workflow's own `GITHUB_TOKEN` has no permissions in the Release Please job, and **Allow GitHub Actions to create and approve pull requests** isn't needed. The release build is called directly when Release Please reports a new release; it doesn't depend on a tag-push or release event triggering another workflow. See the [Release Please action's credential guidance](https://github.com/googleapis/release-please-action#github-credentials).
+The workflow's own `GITHUB_TOKEN` has no permissions in the Release Please job, and **Allow GitHub Actions to create and approve pull requests** isn't needed. The release build runs as later jobs in the same workflow when Release Please reports a new release; it doesn't depend on a tag-push or release event triggering another workflow. It isn't a separate reusable workflow either, because GitHub leaves environment secrets empty in a called workflow unless the caller uses `secrets: inherit` ([actions/runner#4453](https://github.com/actions/runner/issues/4453)). See the [Release Please action's credential guidance](https://github.com/googleapis/release-please-action#github-credentials).
 
 ## Make a release
 
@@ -95,12 +95,12 @@ The workflow's own `GITHUB_TOKEN` has no permissions in the Release Please job, 
 2. Merge changes using Conventional Commits. `fix:` and `perf:` produce patch releases, `feat:` produces minor releases, and breaking changes (`!` or a `BREAKING CHANGE:` footer) produce major releases. All supported Conventional Commit types can trigger a release: `docs:`, `test:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:` and `revert:` also produce patch releases. Continue using Conventional Commit messages; unstructured commit messages are not supported. Merging the generated release PR remains the step that publishes a release.
 3. Release Please opens or updates a release PR containing the proposed version and changelog. Review it and check CI. The initial release is configured as **1.0.0**; the empty initial manifest means no previous release is recorded.
 4. Merge the release PR when ready. Release Please creates the `vX.Y.Z` tag and publishes the release notes automatically, then starts the signed build. You do not need to edit `version.txt`, push tags, or create releases yourself.
-5. Follow the [Release Please workflow](https://github.com/viaductindustries/cert-lab/actions/workflows/release-please.yml). When its build and upload jobs succeed, the [GitHub Release](https://github.com/viaductindustries/cert-lab/releases) contains the notarized universal ZIP and checksums. Download the app and verify the interactive 1Password approval experience.
+5. Follow the [Release workflow](https://github.com/viaductindustries/cert-lab/actions/workflows/release.yml). When its build and upload jobs succeed, the [GitHub Release](https://github.com/viaductindustries/cert-lab/releases) contains the notarized universal ZIP and checksums. Download the app and verify the interactive 1Password approval experience.
 6. Review the automatically opened PR in [homebrew-tap](https://github.com/viaductindustries/homebrew-tap/pulls). Merge it once the tap's validation and installation checks pass. Users can then run `brew update` and `brew upgrade --cask cert-lab`.
 
 `version.txt` remains the build input, but Release Please owns its updates. `.release-please-manifest.json` tracks the released version; `release-please-config.json` selects the `simple` strategy. Numeric `vX.Y.Z` releases are supported; prerelease suffixes are not currently supported by the app build.
 
-For a failed signing/build run, choose **Re-run failed jobs** on the original run, preserving the successful Release Please job's outputs. Rerunning the whole Release Please workflow after it has already created a release may report no new release and skip the build. To explicitly rebuild an existing release, run the **Release** workflow on `main` and enter its tag, or use:
+For a failed signing/build run, choose **Re-run failed jobs** on the original run, preserving the successful Release Please job's outputs. Rerunning the whole workflow after it has already created a release may report no new release and skip the build. To explicitly rebuild an existing release, run the **Release** workflow on `main` and enter its tag, or use the command below. Running it without a tag runs Release Please instead.
 
 ```sh
 gh workflow run release.yml --ref main -f tag=v1.0.0
@@ -114,8 +114,8 @@ Ordinary CI requires no Apple secrets and uploads an ad-hoc-signed universal dev
 
 - **Release Please fails to create a token:** check that the app is installed on `cert-lab` and that the client ID and private key are in the `release-please` environment, not the repository. A deleted private key must be replaced.
 - **Release PR cannot be created or updated:** check that the app still has **Contents**, **Issues** and **Pull requests** read/write permissions, and that any permission change has been accepted on the installation.
-- **Release has no downloads yet:** check the Release Please run. Release notes are published before signing starts; if a later step fails, retry the failed build as described above.
-- **Missing required environment variable:** check the three secrets in the `release` environment and the two variables above. The key and issuer IDs are read from `vars`, not `secrets`. Repository secrets with the same names aren't passed to the signing job.
+- **Release has no downloads yet:** check the Release workflow run. Release notes are published before signing starts; if a later step fails, retry the failed build as described above.
+- **Missing required environment variable:** check the three secrets in the `release` environment and the two variables above. The key and issuer IDs are read from `vars`, not `secrets`. Repository secrets with the same names aren't used. If the job's log shows the secrets as empty while the variables are set, check that the signing job is still in `release.yml` itself and not moved into a reusable workflow.
 - **Branch is not allowed to deploy to release:** the build ran from a branch other than `main`. Rebuild with `--ref main`; the tag is passed separately.
 - **No valid Developer ID Application identity:** re-export the certificate together with its private key. Check expiration and the `.p12` password. Only include one signing identity.
 - **Apple authentication failure:** check the team API key, issuer UUID, Key ID and base64 encoding of the complete `.p8` file. A revoked key must be replaced.
