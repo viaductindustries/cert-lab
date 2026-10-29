@@ -7,13 +7,8 @@ on:
         description: Existing release tag to build
         required: true
         type: string
+    # Apple credentials come from the release environment, not the caller.
     secrets:
-      APPLE_CERTIFICATE_BASE64:
-        required: true
-      APPLE_CERTIFICATE_PASSWORD:
-        required: true
-      APPLE_API_PRIVATE_KEY_BASE64:
-        required: true
       HOMEBREW_APP_PRIVATE_KEY:
         required: true
   workflow_dispatch:
@@ -34,6 +29,8 @@ jobs:
   build:
     name: Test, sign & notarize
     runs-on: macos-26
+    # Holds the Apple signing secrets; only runs from main.
+    environment: release
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
