@@ -1,47 +1,80 @@
 name: Release
 
+# One workflow for the whole release. The signing job must not live in a
+# reusable workflow: GitHub leaves environment secrets empty in called
+# workflows unless the caller uses `secrets: inherit` (actions/runner#4453).
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Existing release tag to build
-        required: true
-        type: string
-    # Apple credentials come from the release environment, not the caller.
-    secrets:
-      HOMEBREW_APP_PRIVATE_KEY:
-        required: true
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to rebuild (for example v1.0.0)
-        required: true
+        description: Existing release tag to rebuild (for example v1.0.0). Leave empty to run Release Please.
+        required: false
         type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-build-${{ inputs.tag }}
-  cancel-in-progress: false
-
 jobs:
+  release-please:
+    name: Release Please
+    if: github.ref == 'refs/heads/main' && !inputs.tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds the Release Please app key; only runs from main.
+    environment: release-please
+    concurrency:
+      group: release-please-main
+      cancel-in-progress: false
+    # Release Please acts with the app token below, not GITHUB_TOKEN.
+    permissions: {}
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # PRs opened with an app token trigger CI; ones opened with GITHUB_TOKEN don't.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          permission-contents: write # create tags and GitHub Releases
+          permission-issues: write # manage release labels
+          permission-pull-requests: write # open and update release PRs
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ steps.app.outputs.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   build:
     name: Test, sign & notarize
+    needs: release-please
+    # Runs for a new release, or for a manual rebuild (when release-please is skipped).
+    if: ${{ !cancelled() && (needs.release-please.outputs.release_created == 'true' || inputs.tag) }}
     runs-on: macos-26
     # Holds the Apple signing secrets; only runs from main.
     environment: release
     timeout-minutes: 60
+    concurrency:
+      group: release-build-${{ needs.release-please.outputs.tag_name || inputs.tag }}
+      cancel-in-progress: false
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
+    outputs:
+      tag: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Validate release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           VERSION="$(tr -d '[:space:]' < version.txt)"
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$RELEASE_TAG" != "v$VERSION" ]]; then
@@ -53,7 +86,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
         run: gh release view "$RELEASE_TAG"
 
       - name: Toolchain
@@ -92,9 +124,11 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  release:
+  publish:
     name: Attach notarized downloads
     needs: build
+    # Explicit, because a skipped release-please job would otherwise skip this one.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -109,7 +143,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: |
           gh release view "$TAG" --json assets --jq '.assets[].name' > existing-assets.txt
           mkdir existing
@@ -133,13 +167,16 @@ jobs:
 
   update-homebrew:
     name: Update Homebrew tap
-    needs: release
+    needs: [build, publish]
+    # Explicit, because a skipped release-please job would otherwise skip this one.
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     permissions:
       contents: read
     uses: viaductindustries/homebrew-tap/.github/workflows/update-package.yml@b71ffff060bdd3e1d6235c572177f7bb3846bd24
     with:
       package: cert-lab
-      tag: ${{ inputs.tag }}
+      tag: ${{ needs.build.outputs.tag }}
       app-client-id: ${{ vars.HOMEBREW_APP_CLIENT_ID }}
+    # The tap workflow can't read environment secrets, so this is a repository secret.
     secrets:
       HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
