@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.4](https://github.com/viaductindustries/cert-lab/compare/v1.0.3...v1.0.4) (2026-10-29)
+
+
+### Documentation
+
+* document homebrew installation and upgrades ([6ca39b0](https://github.com/viaductindustries/cert-lab/commit/6ca39b026be0eb78afb71efbc88431f18073999b))
+
+
+### Continuous Integration
+
+* **deps:** bump the actions group with 5 updates ([#6](https://github.com/viaductindustries/cert-lab/issues/6)) ([bc472e1](https://github.com/viaductindustries/cert-lab/commit/bc472e19909efb8d9da822894da609d613acded1))
+* harden github actions workflows ([4710efc](https://github.com/viaductindustries/cert-lab/commit/4710efca2111e3dbbe2dc9d65f2d1a8698829247))
+* **release:** authenticate release please as a github app ([349b3bd](https://github.com/viaductindustries/cert-lab/commit/349b3bd2ba8313a79e5d418e2b259adead955067))
+* **release:** read apple signing secrets from the release environment ([c9cb767](https://github.com/viaductindustries/cert-lab/commit/c9cb767b2d43c56736d7dc99b5656f36e7491fb4))
+
 ## [1.0.3](https://github.com/viaductindustries/cert-lab/compare/v1.0.2...v1.0.3) (2026-10-28)
 
 
