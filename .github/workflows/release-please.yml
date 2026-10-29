@@ -10,24 +10,35 @@ permissions:
 
 jobs:
   release-please:
+    name: Release Please
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Holds the Release Please app key; only runs from main.
+    environment: release-please
     concurrency:
       group: release-please-main
       cancel-in-progress: false
-    permissions:
-      contents: write # create tags and GitHub Releases
-      issues: write # manage release labels
-      pull-requests: write # open and update release PRs
+    # Release Please acts with the app token below, not GITHUB_TOKEN.
+    permissions: {}
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # PRs opened with an app token trigger CI; ones opened with GITHUB_TOKEN don't.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+          permission-contents: write # create tags and GitHub Releases
+          permission-issues: write # manage release labels
+          permission-pull-requests: write # open and update release PRs
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          token: ${{ steps.app.outputs.token }}
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
@@ -40,7 +51,6 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
-    # Apple secrets come from the release environment. Pass only the tap key;
-    # RELEASE_PLEASE_TOKEN stays here.
+    # Apple secrets come from the release environment. Pass only the tap key.
     secrets:
       HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}

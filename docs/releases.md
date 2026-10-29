@@ -71,17 +71,27 @@ Release Please passes the private key through the reusable release workflow to t
 
 If the tap job fails, fix its credentials or reported issue and choose **Re-run failed jobs** on the original run. Do not rerun successful signing and upload jobs: the published downloads are immutable. A failed tap update does not invalidate the published app release.
 
-## Enable Release Please
+## Set up the Release Please app
 
-In [Settings → Actions → General](https://github.com/viaductindustries/cert-lab/settings/actions), enable **Allow GitHub Actions to create and approve pull requests**. Organization policy may require an owner to enable this. The Release Please job requests `contents`, `issues`, and `pull-requests` write permissions for managing releases and release PRs. No repository settings are changed by the workflow itself.
+Release Please acts as a GitHub App rather than with `GITHUB_TOKEN`, because GitHub doesn't run pull-request CI for PRs opened or updated with `GITHUB_TOKEN`. With the app, release PRs get CI like any other PR. Each run creates a token that lasts an hour and can only reach this repository.
 
-The default `GITHUB_TOKEN` is sufficient for release PR creation and for the entire release build: the workflow explicitly calls `release.yml` when Release Please reports a new release. It does not depend on a tag-push or release event triggering another workflow.
+1. [Register the app](https://github.com/organizations/viaductindustries/settings/apps/new?name=Viaduct%20Release%20Please&description=Opens%20release%20PRs%20and%20publishes%20releases%20with%20Release%20Please.&url=https%3A%2F%2Fgithub.com%2Fviaductindustries%2Fcert-lab&public=false&webhook_active=false&contents=write&issues=write&pull_requests=write). The link fills in a private app with webhooks off and **Contents**, **Issues** and **Pull requests** read/write permissions. Nothing else is needed. The name must be unique on GitHub, so change it if it's taken.
+2. On the app's page, choose **Install App** and install it on `viaductindustries`, with **Only select repositories** set to `cert-lab`.
+3. Under **Private keys**, choose **Generate a private key**. Keep a copy in 1Password and delete the downloaded file afterwards.
+4. In [Settings → Environments](https://github.com/viaductindustries/cert-lab/settings/environments), open the `release-please` environment (create it if needed, allowing only the `main` branch, as for `release`) and add:
 
-GitHub does not automatically run pull-request CI for PRs created or updated with `GITHUB_TOKEN`. For automatic CI on release PRs, optionally add a `RELEASE_PLEASE_TOKEN` repository secret containing a fine-grained personal access token restricted to this repository with **Contents**, **Issues**, and **Pull requests** read/write permissions. The token owner needs repository access and organization approval where required. The workflow uses that token when present. Without it, run the CI workflow manually against the release PR's branch before merging; a manual run may not satisfy a branch rule requiring a `pull_request` check, so use the token if that rule is enabled. See the [Release Please action's credential guidance](https://github.com/googleapis/release-please-action#github-credentials).
+| `release-please` environment setting | Type | Value |
+|---|---|---|
+| `RELEASE_PLEASE_APP_CLIENT_ID` | Variable | The app's Client ID, from its **General** page |
+| `RELEASE_PLEASE_APP_PRIVATE_KEY` | Secret | The complete private key PEM, including header, footer and line breaks; not base64 |
+
+For example, `gh secret set RELEASE_PLEASE_APP_PRIVATE_KEY --env release-please < ~/Downloads/viaduct-release-please.*.private-key.pem`.
+
+The workflow's own `GITHUB_TOKEN` has no permissions in the Release Please job, and **Allow GitHub Actions to create and approve pull requests** isn't needed. The release build is called directly when Release Please reports a new release; it doesn't depend on a tag-push or release event triggering another workflow. See the [Release Please action's credential guidance](https://github.com/googleapis/release-please-action#github-credentials).
 
 ## Make a release
 
-1. Create the `release` environment, add the three Apple secrets to it and the two Apple variables above, configure the Homebrew publisher credentials, enable the workflow permissions, and merge these workflow changes into `main`.
+1. Create the `release` environment, add the three Apple secrets to it and the two Apple variables above, configure the Homebrew publisher credentials, set up the Release Please app, and merge these workflow changes into `main`.
 2. Merge changes using Conventional Commits. `fix:` and `perf:` produce patch releases, `feat:` produces minor releases, and breaking changes (`!` or a `BREAKING CHANGE:` footer) produce major releases. All supported Conventional Commit types can trigger a release: `docs:`, `test:`, `ci:`, `build:`, `chore:`, `refactor:`, `style:` and `revert:` also produce patch releases. Continue using Conventional Commit messages; unstructured commit messages are not supported. Merging the generated release PR remains the step that publishes a release.
 3. Release Please opens or updates a release PR containing the proposed version and changelog. Review it and check CI. The initial release is configured as **1.0.0**; the empty initial manifest means no previous release is recorded.
 4. Merge the release PR when ready. Release Please creates the `vX.Y.Z` tag and publishes the release notes automatically, then starts the signed build. You do not need to edit `version.txt`, push tags, or create releases yourself.
@@ -102,7 +112,8 @@ Ordinary CI requires no Apple secrets and uploads an ad-hoc-signed universal dev
 
 ## Troubleshooting
 
-- **Release PR cannot be created:** enable the Actions setting above and check organization policy. If using `RELEASE_PLEASE_TOKEN`, check its permissions and expiry.
+- **Release Please fails to create a token:** check that the app is installed on `cert-lab` and that the client ID and private key are in the `release-please` environment, not the repository. A deleted private key must be replaced.
+- **Release PR cannot be created or updated:** check that the app still has **Contents**, **Issues** and **Pull requests** read/write permissions, and that any permission change has been accepted on the installation.
 - **Release has no downloads yet:** check the Release Please run. Release notes are published before signing starts; if a later step fails, retry the failed build as described above.
 - **Missing required environment variable:** check the three secrets in the `release` environment and the two variables above. The key and issuer IDs are read from `vars`, not `secrets`. Repository secrets with the same names aren't passed to the signing job.
 - **Branch is not allowed to deploy to release:** the build ran from a branch other than `main`. Rebuild with `--ref main`; the tag is passed separately.
