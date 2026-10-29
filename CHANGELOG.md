@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/viaductindustries/cert-lab/compare/v1.0.4...v1.0.5) (2026-10-29)
+
+
+### Continuous Integration
+
+* **release:** run release please and the signed build in one workflow ([#7](https://github.com/viaductindustries/cert-lab/issues/7)) ([1f54d33](https://github.com/viaductindustries/cert-lab/commit/1f54d33cf89c5927f5d78c40798a0558da55a03a))
+
 ## [1.0.4](https://github.com/viaductindustries/cert-lab/compare/v1.0.3...v1.0.4) (2026-10-29)
 
 
